@@ -25,6 +25,8 @@ public final class AudioUnitViewController: AUViewController, AUAudioUnitFactory
     private func connectUI() {
         guard isViewLoaded, hosting == nil, let au = audioUnit else { return }
         let model = SynthModel(host: HooksSynthHost(hooks: au.hooks))
+        model.uiWidthModeStorage = (get: { [weak au] in au?.uiWidthMode ?? false },
+                                    set: { [weak au] in au?.chooseUIWidthMode($0) })
         let host = UIHostingController(rootView: SynthPanelView(model: model))
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear

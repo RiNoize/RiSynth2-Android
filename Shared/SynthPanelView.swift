@@ -3,12 +3,16 @@ import SwiftUI
 /// Synth1's panel, redrawn: same sections, same places, same widget kinds
 /// (so Synth1 users find everything where their hands expect it). Fixed
 /// 770 x 560 design canvas (Synth1's own proportions) scaled to fit the
-/// view (mac window aspect-locked; iPad host windows: centred).
+/// view (mac window aspect-locked; iPad host windows: centred). iPad UI
+/// width mode: the width leads (minus two side scroll strips), the panel
+/// scrolls vertically.
 struct SynthPanelView: View {
     static let designSize = CGSize(width: 770, height: 560)
     /// Editor width at "100 %" (UI size menu, default window) = Synth1's
     /// window at its 150 % (measured side by side).
     static let unitWidth: CGFloat = 700
+    /// Width mode: the invisible scroll strip on each side (view points).
+    static let scrollStripWidth: CGFloat = 40
 
     static let canvasSpace = "synth2.canvas"
     /// The project's home (the version box opens it).
@@ -17,46 +21,46 @@ struct SynthPanelView: View {
     @ObservedObject var model: SynthModel
     @Environment(\.openURL) private var openURL
     @State private var themeDialogPos = CGPoint(x: 220, y: 70)
+    /// Width mode: scroll position in view points (0 = top).
+    @State private var scrollOffset: CGFloat = 0
     /// This instance's palette; the panel hands it down as `\.theme`.
     private var theme: Theme { Theme(model.palette) }
 
     var body: some View {
         GeometryReader { geo in
-            let scale = min(geo.size.width / Self.designSize.width, geo.size.height / Self.designSize.height)
+            let size = geo.size
+            let fit = min(size.width / Self.designSize.width, size.height / Self.designSize.height)
+            let wide = (size.width - 2 * Self.scrollStripWidth) / Self.designSize.width
+            // Width mode scrolls only when the panel would not fit anyway, and
+            // never under a dialog (browser / write, themes, update): those
+            // show the whole panel at the fit scale, text fields and the
+            // bottom bar on screen.
+            let scrolls = model.uiWidthMode && wide > fit
+                && !model.showBrowser && !model.showThemes && model.update == nil
+            let scale = scrolls ? wide : fit
+            let contentHeight = Self.designSize.height * scale
+            let maxOffset = scrolls ? max(0, contentHeight - size.height) : 0
             ZStack(alignment: .topLeading) {
-                ZStack(alignment: .topLeading) {
-                    canvas
-                    if model.showBrowser { PatchBrowserView(model: model).place(6, 34, 758, 444) }
-                }
-                // tips over everything at the canvas' scale (SynthTooltip.swift)
-                .oxoTooltipHost()
-                if model.showThemes {
-                    ThemeDialog(model: model, position: $themeDialogPos, canvas: Self.designSize)
-                }
-                if model.showLogoMenu {
-                    // A click anywhere else closes it.
-                    Color.clear.contentShape(Rectangle())
-                        .frame(width: Self.designSize.width, height: Self.designSize.height)
-                        .onTapGesture { model.showLogoMenu = false }
-                    LogoMenu(model: model, scale: scale).offset(x: 6, y: 30)
-                }
-                if model.showEffectMenu {
-                    Color.clear.contentShape(Rectangle())
-                        .frame(width: Self.designSize.width, height: Self.designSize.height)
-                        .onTapGesture { model.showEffectMenu = false }
-                    // under the effect type display (section x 66 +- 23, y 40 + 8.5)
-                    EffectTypeMenu(model: model).offset(x: 548 + 66 - 23, y: 34 + 40 + 9)
-                }
-                if let state = model.update {
-                    UpdateDialog(model: model, state: state)
-                        .frame(width: Self.designSize.width, height: Self.designSize.height)
+                panel(scale: scale)
+                    .offset(x: (size.width - Self.designSize.width * scale) / 2,
+                            // top-aligned (a tall window leaves the room below)
+                            y: scrolls ? -min(max(0, scrollOffset), maxOffset) : 0)
+                if scrolls {
+                    PanelScrollStrip(maxOffset: maxOffset, offset: $scrollOffset)
+                        .frame(width: Self.scrollStripWidth, height: size.height)
+                    PanelScrollStrip(maxOffset: maxOffset, offset: $scrollOffset)
+                        .frame(width: Self.scrollStripWidth, height: size.height)
+                        .offset(x: size.width - Self.scrollStripWidth)
                 }
             }
-            .frame(width: Self.designSize.width, height: Self.designSize.height, alignment: .topLeading)
-            .coordinateSpace(name: Self.canvasSpace)
-            .scaleEffect(scale, anchor: .topLeading)
-            .offset(x: (geo.size.width - Self.designSize.width * scale) / 2,
-                    y: (geo.size.height - Self.designSize.height * scale) / 2)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .clipped()
+            // a resize / rotation shrank the range (kept while a dialog shows
+            // the fit layout: closing it returns to the same place)
+            .onChange(of: maxOffset) { _, newMax in
+                if scrolls, scrollOffset > newMax { scrollOffset = newMax }
+            }
+            .onChange(of: model.uiWidthMode) { _, _ in scrollOffset = 0 }
         }
         .background(theme.panel)
         #if os(iOS)
@@ -64,6 +68,42 @@ struct SynthPanelView: View {
         #endif
         .modifier(FileActions(model: model))
         .environment(\.theme, theme)
+    }
+
+    /// The design canvas + its overlays, scaled (top-left anchored).
+    private func panel(scale: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
+                canvas
+                if model.showBrowser { PatchBrowserView(model: model).place(6, 34, 758, 444) }
+            }
+            // tips over everything at the canvas' scale (SynthTooltip.swift)
+            .oxoTooltipHost()
+            if model.showThemes {
+                ThemeDialog(model: model, position: $themeDialogPos, canvas: Self.designSize)
+            }
+            if model.showLogoMenu {
+                // A click anywhere else closes it.
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: Self.designSize.width, height: Self.designSize.height)
+                    .onTapGesture { model.showLogoMenu = false }
+                LogoMenu(model: model, scale: scale).offset(x: 6, y: 30)
+            }
+            if model.showEffectMenu {
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: Self.designSize.width, height: Self.designSize.height)
+                    .onTapGesture { model.showEffectMenu = false }
+                // under the effect type display (section x 66 +- 23, y 40 + 8.5)
+                EffectTypeMenu(model: model).offset(x: 548 + 66 - 23, y: 34 + 40 + 9)
+            }
+            if let state = model.update {
+                UpdateDialog(model: model, state: state)
+                    .frame(width: Self.designSize.width, height: Self.designSize.height)
+            }
+        }
+        .frame(width: Self.designSize.width, height: Self.designSize.height, alignment: .topLeading)
+        .coordinateSpace(name: Self.canvasSpace)
+        .scaleEffect(scale, anchor: .topLeading)
     }
 
     private var canvas: some View {
@@ -129,15 +169,18 @@ struct SynthPanelView: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text("Synth2").font(.system(size: 20, weight: .bold)).foregroundColor(theme.ink)
                 .contentShape(Rectangle())
-                // Logo menu (UI size + theme), where the host can resize.
+                // Logo menu (UI size where the host can resize + theme).
                 // Press + release, not onTapGesture: a tap is cancelled by
                 // the slightest mouse travel (Oxo Drums' logo).
                 .gesture(DragGesture(minimumDistance: 0).onEnded { g in
-                    guard model.requestEditorWidth != nil, hypot(g.translation.width, g.translation.height) < 8 else { return }
+                    guard hypot(g.translation.width, g.translation.height) < 8 else { return }
                     model.showLogoMenu.toggle()
                 })
             Text("Virtual Analog").font(.system(size: 12).italic()).foregroundColor(theme.dimInk)
             Spacer()
+            if model.uiWidthModeStorage != nil {
+                UIModeToggle(model: model).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            }
             Text("V\(Self.version)  a Synth1 recreation")
                 .font(.system(size: 12, weight: .bold)).foregroundColor(.white)
                 .padding(.horizontal, 10).frame(height: 20)
@@ -411,6 +454,81 @@ struct SynthPanelView: View {
         let name = v < 0 ? "none" : v < SynthModel.paramCount ? model.host.name(v) : "\(v)"
         return MenuDisplay(model: model, id: id, width: 120, label: name,
                            groups: [("", [(-1, "none")] + Self.assignTargets.map { ($0, model.host.name($0)) })])
+    }
+}
+
+/// Width mode: one of the two invisible side strips. A swipe here grabs
+/// the panel 1:1 (drag down = panel moves down), a flick carries on and
+/// eases out, clamped (no rubber band). The panel itself never scrolls:
+/// its knobs own the vertical drags (Oxo Sample's scroll strips).
+private struct PanelScrollStrip: View {
+    let maxOffset: CGFloat
+    @Binding var offset: CGFloat
+    @State private var dragStart: CGFloat?
+
+    var body: some View {
+        // near-zero alpha: hit-testable everywhere, invisible
+        Color.white.opacity(0.001)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    if dragStart == nil { dragStart = min(max(0, offset), maxOffset) }
+                    guard let start = dragStart else { return }
+                    offset = min(max(0, start - g.translation.height), maxOffset)
+                }
+                .onEnded { g in
+                    defer { dragStart = nil }
+                    guard let start = dragStart else { return }
+                    let end = min(max(0, start - g.predictedEndTranslation.height), maxOffset)
+                    withAnimation(.easeOut(duration: 0.45)) { offset = end }
+                })
+    }
+}
+
+/// iPad UI mode toggle (title band, left of the version box): vertical
+/// arrow lit = height mode (the whole panel fits), horizontal lit = width
+/// mode (the width leads, the panel scrolls).
+private struct UIModeToggle: View {
+    @ObservedObject var model: SynthModel
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let wide = model.uiWidthMode
+        ZStack {
+            // the dim one shorter: its heads stay clear of the lit one's
+            DoubleArrow(horizontal: !wide, length: 0.7)
+                .stroke(theme.ink.opacity(0.4), style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round))
+            DoubleArrow(horizontal: wide)
+                .stroke(theme.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: 22, height: 22)
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0).onEnded { g in
+            if hypot(g.translation.width, g.translation.height) < 8 { model.toggleUIWidthMode() }
+        })
+    }
+}
+
+private struct DoubleArrow: Shape {
+    let horizontal: Bool
+    /// Fraction of the full half-length.
+    var length: CGFloat = 1
+
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY), r = (min(rect.width, rect.height) / 2 - 1.5) * length
+        let head: CGFloat = length < 1 ? 2.2 : 2.8
+        var p = Path()
+        p.move(to: CGPoint(x: c.x, y: c.y - r))
+        p.addLine(to: CGPoint(x: c.x, y: c.y + r))
+        for tip in [-r, r] {
+            let back = tip < 0 ? head : -head
+            p.move(to: CGPoint(x: c.x - head, y: c.y + tip + back))
+            p.addLine(to: CGPoint(x: c.x, y: c.y + tip))
+            p.addLine(to: CGPoint(x: c.x + head, y: c.y + tip + back))
+        }
+        guard horizontal else { return p }
+        return p.applying(CGAffineTransform(translationX: c.x, y: c.y).rotated(by: .pi / 2).translatedBy(x: -c.x, y: -c.y))
     }
 }
 

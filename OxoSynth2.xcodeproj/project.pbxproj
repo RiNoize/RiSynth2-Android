@@ -55,25 +55,7 @@
 			);
 			target = A52D64083016855600DC1B0F /* OxoSynth2 */;
 		};
-		A52D6E0230170000000000A3 /* Exceptions for "Shared" folder in "OxoSynth2" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				"Resources/Synth2 Factory",
-				"Resources/Synth2 Starter Banks",
-			);
-			target = A52D64083016855600DC1B0F /* OxoSynth2 */;
-		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
-		A52D6449301686A000DC1B0F /* Exceptions for "OxoSynth2AudioUnit" folder in "Copy Bundle Resources" phase from "OxoSynth2AudioUnit" target */ = {
-			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
-			buildPhase = A52D6419301686A000DC1B0F /* Resources */;
-			membershipExceptions = (
-				DSP/Synth2Instance.hpp,
-			);
-		};
-/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A52D640B3016855600DC1B0F /* OxoSynth2 */ = {
@@ -88,16 +70,12 @@
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				A52D6445301686A000DC1B0F /* Exceptions for "OxoSynth2AudioUnit" folder in "OxoSynth2AudioUnit" target */,
-				A52D6449301686A000DC1B0F /* Exceptions for "OxoSynth2AudioUnit" folder in "Copy Bundle Resources" phase from "OxoSynth2AudioUnit" target */,
 			);
 			path = OxoSynth2AudioUnit;
 			sourceTree = "<group>";
 		};
 		A52D65003016900000DC1B0F /* Shared */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				A52D6E0230170000000000A3 /* Exceptions for "Shared" folder in "OxoSynth2" target */,
-			);
 			explicitFolders = (
 				"Resources/Synth2 Factory",
 				"Resources/Synth2 Starter Banks",
@@ -164,7 +142,6 @@
 			);
 			fileSystemSynchronizedGroups = (
 				A52D640B3016855600DC1B0F /* OxoSynth2 */,
-				A52D65003016900000DC1B0F /* Shared */,
 			);
 			name = OxoSynth2;
 			packageProductDependencies = (
@@ -204,7 +181,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2660;
-				LastUpgradeCheck = 2660;
+				LastUpgradeCheck = 2710;
 				TargetAttributes = {
 					A52D64083016855600DC1B0F = {
 						CreatedOnToolsVersion = 26.6;
@@ -313,6 +290,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 29G4VSKS8V;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -336,6 +314,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -377,6 +356,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 29G4VSKS8V;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -393,6 +373,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -403,14 +384,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = OxoSynth2/OxoSynth2.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)",
-				);
 				INFOPLIST_FILE = OxoSynth2/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "$(OXO_PRODUCT_NAME)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -423,10 +399,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lz",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(OXO_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -436,7 +408,6 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "OxoSynth2/OxoSynth2-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;
@@ -448,14 +419,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = OxoSynth2/OxoSynth2.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(SRCROOT)",
-				);
 				INFOPLIST_FILE = OxoSynth2/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "$(OXO_PRODUCT_NAME)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -468,10 +434,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lz",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = "$(OXO_BUNDLE_ID)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -481,7 +443,6 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "OxoSynth2/OxoSynth2-Bridging-Header.h";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 2;

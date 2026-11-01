@@ -12,11 +12,17 @@ bool MoveToTrash(const std::filesystem::path &path);
 
 #ifdef OXO_TRASH_IMPL
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
 
 bool oxo::MoveToTrash(const std::filesystem::path &path) {
+#if TARGET_OS_IPHONE
+    (void)path;
+    return false; // a container Trash nobody can empty: the caller deletes
+#else
     @autoreleasepool {
         NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.c_str()]];
         return [NSFileManager.defaultManager trashItemAtURL:url resultingItemURL:nil error:nil];
     }
+#endif
 }
 #endif

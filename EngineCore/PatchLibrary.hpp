@@ -726,6 +726,49 @@ public:
         Rescan();
         return ok;
     }
+    // Browser > Delete bank: its folder goes to the Trash (deleted where there
+    // is none), or only its .sy1 files when the folder also holds sub-folders
+    // (other banks) or is the root itself. Never the factory bank, never
+    // anything outside the root. Rescans.
+    bool DeleteBank(int bank) {
+        EnsureScanned();
+        const auto &banks = lib_.Banks();
+        if (bank < 0 || size_t(bank) >= banks.size() || banks[size_t(bank)].readOnly) return false;
+        const std::filesystem::path dir = banks[size_t(bank)].source;
+        const std::filesystem::path rel = dir.lexically_normal().lexically_relative(root_.lexically_normal());
+        if (root_.empty() || rel.empty() || *rel.begin() == "..") return false;
+        std::error_code ec;
+        const auto items = FolderChildren(dir);
+        const bool wholeFolder = rel != "." && std::none_of(items.begin(), items.end(), [&](auto &p) {
+            return std::filesystem::is_directory(p, ec);
+        });
+        bool ok = true;
+        if (wholeFolder) ok = Remove(dir);
+        else
+            for (const auto &p : items)
+                if (IsSy1(p.filename().string()) && !std::filesystem::is_directory(p, ec)) ok = Remove(p) && ok;
+        Rescan();
+        return ok;
+    }
+
+    // Browser > Export bank: a folder named after the bank's (" 2" when
+    // taken) is created in `dest` with the bank's patches, file names kept
+    // (so the slots stay; sub-banks are not part of it). Any bank, the
+    // factory one too. Returns the new folder, "" = failed.
+    std::string ExportBank(int bank, const std::filesystem::path &dest) {
+        EnsureScanned();
+        const auto &banks = lib_.Banks();
+        std::error_code ec;
+        if (bank < 0 || size_t(bank) >= banks.size() || !std::filesystem::is_directory(dest, ec)) return {};
+        const PatchBank &b = banks[size_t(bank)];
+        const std::filesystem::path out = UniquePath(dest / SafeName(std::filesystem::path(b.source).filename().string()));
+        if (!std::filesystem::create_directory(out, ec)) return {};
+        bool ok = true;
+        for (const PatchRef &p : b.slots)
+            if (!p.Empty()) ok = std::filesystem::copy_file(p.file, out / std::filesystem::path(p.file).filename(), ec) && ok;
+        return ok ? out.string() : std::string();
+    }
+
     std::string SlotFile(int bank, int slot) {
         EnsureScanned();
         return bank >= 0 && slot >= 0 ? lib_.SlotFile(size_t(bank), size_t(slot)) : std::string();
@@ -778,6 +821,14 @@ private:
                 else if (std::filesystem::remove(p, ec)) removed_.push_back(name);
             }
         }
+    }
+
+    // To the Trash, else deleted (iOS: no Trash).
+    bool Remove(const std::filesystem::path &p) {
+        if (trash_ && trash_(p)) return true;
+        std::error_code ec;
+        std::filesystem::remove_all(p, ec);
+        return !std::filesystem::exists(p, ec);
     }
 
     void EnsureRoot() const {

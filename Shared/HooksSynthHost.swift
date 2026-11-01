@@ -38,6 +38,8 @@ final class HooksSynthHost: SynthHost {
     func slotPath(bank: Int, slot: Int) -> String { str(h.slotPath(h.ctx, Int32(bank), Int32(slot))) }
     func newBank(_ name: String) -> Int { Int(name.withCString { h.newBank(h.ctx, $0) }) }
     func movePatch(bank: Int, from: Int, to: Int) -> Bool { h.movePatch(h.ctx, Int32(bank), Int32(from), Int32(to)) != 0 }
+    func deleteBank(_ bank: Int) -> Bool { h.deleteBank(h.ctx, Int32(bank)) != 0 }
+    func exportBank(_ bank: Int, to dir: String) -> String { str(dir.withCString { h.exportBank(h.ctx, Int32(bank), $0) }) }
     func importItems(_ paths: String) -> [String] {
         str(paths.withCString { h.importItems(h.ctx, $0) }).split(separator: "\n").map(String.init)
     }

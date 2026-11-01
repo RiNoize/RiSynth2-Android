@@ -1,56 +1,45 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// The Synth2 app is the library manager of the AUv3: banks imported here
-/// (file picker, or "Open in Oxo Synth2" from Files / Mail / AirDrop) land in
-/// the app-group library the plugin reads. The synth itself runs as an
-/// Audio Unit in AUM, Cubasis, GarageBand, Loopy Pro…
+/// The app only hosts the AUv3 extension: the synth runs inside an Audio Unit
+/// host. No engine, no library (the plugin's bank browser manages it).
 struct ContentView: View {
-    @State private var banks: [String] = []
-    @State private var importing = false
-    @State private var message = ""
+    private static let panel = Color(red: 0xB7 / 255, green: 0xB7 / 255, blue: 0x9B / 255)
+    private static let ink = Color(red: 0x1A / 255, green: 0x1A / 255, blue: 0x0F / 255)
 
-    private let root = SynthLibrary.appGroupLibraryRoot
-    private let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Synth2"
+    private let info = Bundle.main.infoDictionary ?? [:]
+    private var name: String { info["CFBundleDisplayName"] as? String ?? "Synth2" }
+    private var version: String {
+        "version \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
+    }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text("\(name) is an Audio Unit instrument: open it in AUM, Cubasis, GarageBand, Loopy Pro or any AUv3 host.")
-                    Text("Synth1 banks (folders of .sy1 patches, zip banks, single .sy1 patches) imported here are copied into the library the plugin's bank browser shows. The plugin can import too: preset browser › Import…")
-                        .foregroundStyle(.secondary)
-                }
-                Section("Library") {
-                    if banks.isEmpty { Text("No banks yet").foregroundStyle(.secondary) }
-                    ForEach(banks, id: \.self) { Text($0) }
-                }
-                if !message.isEmpty { Section { Text(message).foregroundStyle(.secondary) } }
-            }
-            .navigationTitle(name)
-            .toolbar {
-                Button("Import banks…") { importing = true }
-            }
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
-            if case let .success(urls) = result { importURLs(urls) }
-        }
-        .onOpenURL { importURLs([$0]) }
-        .onAppear(perform: refresh)
-    }
+        ZStack {
+            Self.panel.ignoresSafeArea()
 
-    private func importURLs(_ urls: [URL]) {
-        let added = SynthLibrary.withAccess(urls) { String(cString: OxoSynth2ImportItems(root.path, $0)) }
-            .split(separator: "\n")
-        message = added.isEmpty ? "Nothing imported (pick bank folders, zip banks or .sy1 patches)."
-            : "Imported \(added.count) item(s)."
-        refresh()
-    }
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    Text(name)
+                        .font(.system(size: 34, weight: .bold))
+                    Text(version)
+                        .font(.system(size: 11, weight: .medium))
+                        .opacity(0.6)
+                }
 
-    private func refresh() {
-        try? FileManager.default.createDirectory(at: root.appendingPathComponent("User"), withIntermediateDirectories: true)
-        banks = ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [])
-            .filter { !$0.hasPrefix(".") }
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(name) is an Audio Unit instrument: open it in a host app like AUM, Cubasis, GarageBand or Loopy Pro.")
+                        .font(.system(size: 14))
+                    Text("In your host, add an AUv3 instrument and pick \(name).")
+                        .font(.system(size: 13))
+                        .opacity(0.7)
+                }
+            }
+            .foregroundColor(Self.ink)
+            .padding(22)
+            .frame(maxWidth: 560, alignment: .leading)
+        }
     }
+}
+
+#Preview {
+    ContentView()
 }

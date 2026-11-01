@@ -1,6 +1,6 @@
 // Renders the editor with a mock host to PNG (layout eye-check without a DAW).
 //   swiftc Shared/*.swift tools/ui_snapshot/main.swift -o build/ui/snap
-//   ./build/ui/snap out.png [browser|write|learn|themes|logo|effect|update]
+//   ./build/ui/snap out.png [browser|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank]
 import AppKit
 import SwiftUI
 
@@ -46,6 +46,8 @@ final class MockHost: SynthHost {
     func slotPath(bank: Int, slot: Int) -> String { "" }
     func newBank(_ name: String) -> Int { 0 }
     func movePatch(bank: Int, from: Int, to: Int) -> Bool { true }
+    func deleteBank(_ bank: Int) -> Bool { true }
+    func exportBank(_ bank: Int, to dir: String) -> String { "" }
     func importItems(_ paths: String) -> [String] { [] }
     func name(_ id: Int) -> String { "param \(id)" }
     func displayName(_ id: Int) -> String { name(id) }
@@ -67,9 +69,15 @@ let model = SynthModel(host: MockHost())
 if args.count > 2 {
     model.loadLibrary()
     if args[2] == "themes" {
-    } else if args[2] == "logo" {
-        model.requestEditorWidth = { _ in }
+    } else if args[2] == "logo" || args[2] == "logo-ipad" {
+        // logo-ipad: no resize callback (AUv3) = themes only
+        if args[2] == "logo" { model.requestEditorWidth = { _ in } }
         model.showLogoMenu = true
+    } else if args[2] == "ipad" || args[2] == "ipad-wide" {
+        // the AUv3's UI mode toggle; ipad-wide = width mode in a wide, short
+        // window (the panel scrolls, side strips)
+        var wide = args[2] == "ipad-wide"
+        model.uiWidthModeStorage = (get: { wide }, set: { wide = $0 })
     } else if args[2] == "effect" {
         model.showEffectMenu = true
     } else if args[2] == "update" {
@@ -84,9 +92,12 @@ if args.count > 2 {
     } else {
         model.openBrowser()
         model.load(bank: 1, slot: 1)
+        if args[2] == "delete-bank" { model.bankToDelete = model.banks[0].id }
     }
 }
-let width = 1155.0, height = width * SynthPanelView.designSize.height / SynthPanelView.designSize.width
+let width = 1155.0
+let height = args.count > 2 && args[2] == "ipad-wide" ? 600.0
+    : width * SynthPanelView.designSize.height / SynthPanelView.designSize.width
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     app.setActivationPolicy(.prohibited)

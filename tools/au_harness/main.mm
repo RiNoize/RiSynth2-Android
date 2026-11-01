@@ -11,6 +11,7 @@
 int main() {
     int fails = 0;
     auto expect = [&](bool ok, const char *what) { if (!ok) { std::printf("FAIL %s\n", what); ++fails; } };
+    std::system("rm -rf /tmp/oxo_s2_ios_harness_lib"); // the checks expect a fresh library ("User" only)
     void *inst = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr);
     Synth2Prepare(inst, 48000, 512);
     std::vector<float> L(512), R(512);
@@ -111,6 +112,18 @@ int main() {
     expect(std::strstr(h.libraryJSON(h.ctx), "\"Dropped\"") != nullptr, "dropped zip extracted");
     expect(std::strcmp(h.libraryNotice(h.ctx), "Dropped.zip imported and moved to Trash") == 0, "dropped zip notice");
     expect(*h.libraryNotice(h.ctx) == 0, "notice cleared");
+    {   // Delete bank: the folder goes (here to the Trash: mac), the bank leaves the list
+        const char *j = h.libraryJSON(h.ctx), *at = std::strstr(j, "\"name\":\"Dropped\"");
+        int32_t b = -1;
+        for (const char *p = j; at && (p = std::strstr(p, "\"name\":")) && p <= at; ++p) ++b;
+        expect(b >= 0 && h.deleteBank(h.ctx, b) == 1, "delete bank");
+        expect(std::strstr(h.libraryJSON(h.ctx), "\"Dropped\"") == nullptr, "deleted bank gone");
+    }
+    {   // Export bank: bank 0 (Imported) becomes a folder in the picked one
+        std::system("rm -rf /tmp/oxo_s2_hx && mkdir -p /tmp/oxo_s2_hx");
+        expect(std::strcmp(h.exportBank(h.ctx, 0, "/tmp/oxo_s2_hx"), "/tmp/oxo_s2_hx/Imported") == 0 &&
+                   std::system("test -f /tmp/oxo_s2_hx/Imported/001.sy1") == 0, "export bank");
+    }
     // Initialize patch = Synth2's INIT; the double-click default follows it
     int32_t lo = 0, hi = 0, def = 0;
     h.paramInfo(h.ctx, 33, &lo, &hi, &def);

@@ -314,6 +314,92 @@ OXO_TEST(StarterBanksAreSeededOnce) {
     fs::remove_all(base);
 }
 
+// Delete bank: a plain bank folder goes whole (Trash, or deleted without
+// one); a folder holding sub-banks and the root's own bank lose only their
+// .sy1 files; the factory bank and bad indices are refused.
+OXO_TEST(PatchManagerDeleteBank) {
+    const fs::path base = FreshDir("oxo_s2_delete_bank_test");
+    const fs::path root = base / "Synth2", factory = base / "Bundle" / kFactoryBankName, trash = base / "Trash";
+    for (const fs::path &d : {factory, root / "A", root / "B", root / "Sets" / "Sub", trash}) fs::create_directories(d);
+    WriteFile(factory / "001.sy1", "INIT\nver=112\n");
+    WriteFile(root / "A" / "001.sy1", "A1\nver=112\n");
+    WriteFile(root / "A" / "notes.txt", "x");
+    WriteFile(root / "B" / "001.sy1", "B1\nver=112\n");
+    WriteFile(root / "Sets" / "001.sy1", "S1\nver=112\n");
+    WriteFile(root / "Sets" / "Sub" / "001.sy1", "Sub1\nver=112\n");
+    WriteFile(root / "Loose.sy1", "Loose\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    std::vector<std::string> trashed;
+    m.SetTrash([&](const fs::path &p) {
+        trashed.push_back(p.filename().string());
+        std::error_code ec;
+        fs::rename(p, trash / p.filename(), ec);
+        return !ec;
+    });
+    m.Rescan();
+    const auto find = [&](const std::string &name) {
+        const auto &banks = m.Library().Banks();
+        for (size_t i = 0; i < banks.size(); ++i)
+            if (banks[i].name == name) return int(i);
+        return -1;
+    };
+    // factory, Synth2 (loose), A, B, Sets, Sets / Sub
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(6));
+    OXO_EXPECT(!m.DeleteBank(0) && fs::exists(factory / "001.sy1"));
+    OXO_EXPECT(!m.DeleteBank(-1) && !m.DeleteBank(99));
+
+    OXO_EXPECT(m.DeleteBank(find("A")));
+    OXO_EXPECT(!fs::exists(root / "A") && fs::exists(trash / "A" / "notes.txt"));
+    OXO_EXPECT_EQ(find("A"), -1);
+
+    OXO_EXPECT(m.DeleteBank(find("Sets")));
+    OXO_EXPECT(!fs::exists(root / "Sets" / "001.sy1") && fs::exists(root / "Sets" / "Sub" / "001.sy1"));
+    OXO_EXPECT_EQ(find("Sets"), -1);
+    OXO_EXPECT(find("Sets / Sub") >= 0);
+
+    OXO_EXPECT(m.DeleteBank(find("Synth2")));
+    OXO_EXPECT(fs::exists(root) && !fs::exists(root / "Loose.sy1") && fs::exists(root / "B" / "001.sy1"));
+    OXO_EXPECT_EQ(trashed.size(), size_t(3));
+
+    m.SetTrash(nullptr); // no Trash (iOS): deleted
+    OXO_EXPECT(m.DeleteBank(find("B")));
+    OXO_EXPECT(!fs::exists(root / "B") && !fs::exists(trash / "B"));
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(2)); // factory, Sets / Sub
+    fs::remove_all(base);
+}
+
+// Export bank: a new folder named after the bank's in the target (" 2" when
+// taken), its patches copied with their names, sub-banks left out; the
+// factory bank exports too; a missing target fails.
+OXO_TEST(PatchManagerExportBank) {
+    const fs::path base = FreshDir("oxo_s2_export_bank_test");
+    const fs::path root = base / "Synth2", factory = base / "Bundle" / kFactoryBankName, out = base / "Out";
+    for (const fs::path &d : {factory, root / "Sets" / "Sub", out}) fs::create_directories(d);
+    WriteFile(factory / "001.sy1", "INIT\nver=112\n");
+    WriteFile(root / "Sets" / "002.sy1", "S2\nver=112\n");
+    WriteFile(root / "Sets" / "Lead.sy1", "Lead\nver=112\n");
+    WriteFile(root / "Sets" / "notes.txt", "x");
+    WriteFile(root / "Sets" / "Sub" / "001.sy1", "Sub1\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto &banks = m.Library().Banks();
+    int sets = -1;
+    for (size_t i = 0; i < banks.size(); ++i)
+        if (banks[i].name == "Sets") sets = int(i);
+    OXO_EXPECT_EQ(m.ExportBank(sets, out), (out / "Sets").string());
+    std::string text;
+    OXO_EXPECT(ReadTextFile(out / "Sets" / "Lead.sy1", text) && text == "Lead\nver=112\n");
+    OXO_EXPECT(fs::exists(out / "Sets" / "002.sy1"));
+    OXO_EXPECT(!fs::exists(out / "Sets" / "notes.txt") && !fs::exists(out / "Sets" / "Sub"));
+    OXO_EXPECT_EQ(m.ExportBank(sets, out), (out / "Sets 2").string());
+    OXO_EXPECT_EQ(m.ExportBank(0, out), (out / kFactoryBankName).string());
+    OXO_EXPECT(fs::exists(out / kFactoryBankName / "001.sy1"));
+    OXO_EXPECT(m.ExportBank(sets, base / "missing").empty() && m.ExportBank(99, out).empty());
+    fs::remove_all(base);
+}
+
 // Browser drag and drop: move to an empty slot, swap with an occupied one;
 // files are renamed NNN.sy1 so an unnumbered one can't drift into a hole.
 OXO_TEST(PatchManagerMoveRenamesAndSwaps) {

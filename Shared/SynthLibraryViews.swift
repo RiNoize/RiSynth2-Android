@@ -178,7 +178,8 @@ struct VoiceGrid: View {
 /// and a slot, name the patch, Write (an occupied slot says "Overwrite").
 /// Banks are the folders of the library: Import… copies into it, the rest
 /// (rename, share) happens in Finder (right click > Show in Finder); right
-/// click > Delete moves a patch file to the Trash.
+/// click (mac) / long press (iPad) > Delete removes a patch file, > Delete
+/// bank… a bank after a confirmation (mac: to the Trash, iPad: deleted).
 struct PatchBrowserView: View {
     @ObservedObject var model: SynthModel
     @Environment(\.theme) private var theme
@@ -210,6 +211,11 @@ struct PatchBrowserView: View {
         }
         .background(theme.panel)
         .overlay(Rectangle().strokeBorder(theme.edge, lineWidth: 1.5))
+        .overlay {
+            if let id = model.bankToDelete, let bank = model.banks.first(where: { $0.id == id }) {
+                DeleteBankDialog(model: model, bank: bank)
+            }
+        }
         .shadow(color: .black.opacity(0.4), radius: 6)
         .onAppear {
             name = model.patchName
@@ -242,9 +248,13 @@ struct PatchBrowserView: View {
                 button("New bank…", width: 72) { startNaming() }
                 button("Cancel") { model.closeBrowser() }
             } else {
-                button("Import…") { model.fileAction = .importBanks }
                 #if os(macOS)
+                button("Import…") { model.fileAction = .importBanks }
                 button("Open library folder", width: 120) { Finder.open(model.host.libraryRoot) }
+                #else
+                // two pickers: the iOS one can't offer folders and files at once
+                button("Import folder…", width: 96) { model.fileAction = .importFolder }
+                button("Import files…", width: 90) { model.fileAction = .importBanks }
                 #endif
                 button("Refresh") { model.loadLibrary(rescan: true) }
                 PanelButton(title: "Close", width: 60, height: 20, icon: "xmark") { model.closeBrowser() }
@@ -319,7 +329,10 @@ struct PatchBrowserView: View {
         .opacity(locked ? 0.35 : 1)
         .contentShape(Rectangle())
         .onTapGesture { if !locked { model.currentBank = b } }
-        .showInFinder { info.source }
+        .libraryMenu(enabled: !locked, export: { model.fileAction = .exportBank(info.id) }, deleteTitle: "Delete bank…",
+                     delete: info.readOnly ? nil : { model.bankToDelete = info.id }) {
+            info.source
+        }
     }
 
     // MARK: slots
@@ -378,7 +391,7 @@ struct PatchBrowserView: View {
                     model.load(bank: b, slot: s)
                 }
             }
-            .showInFinder(enabled: !patch.isEmpty, delete: readOnly ? nil : { model.deleteSlot(bank: b, slot: s) }) {
+            .libraryMenu(enabled: !patch.isEmpty, delete: readOnly ? nil : { model.deleteSlot(bank: b, slot: s) }) {
                 model.host.slotPath(bank: b, slot: s)
             }
             // drag a patch onto another slot: move there (swap if taken)
@@ -481,21 +494,90 @@ enum Finder {
 #endif
 
 extension View {
-    /// Right click > [Delete,] Show in Finder (mac; nothing on iPad).
+    /// Browser bank / slot menu: right click (mac) = [Export bank…,] Show in
+    /// Finder[, Delete]; long press (iPad) = [Export bank…,] [Delete],
+    /// nothing without either.
     @ViewBuilder
-    func showInFinder(enabled: Bool = true, delete: (() -> Void)? = nil, _ path: @escaping () -> String) -> some View {
+    func libraryMenu(enabled: Bool = true, export: (() -> Void)? = nil, deleteTitle: String = "Delete",
+                     delete: (() -> Void)?, _ path: @escaping () -> String) -> some View {
         #if os(macOS)
         if enabled {
             contextMenu {
-                if let delete { Button("Delete") { delete() } }
+                if let export { Button("Export bank…") { export() } }
                 Button("Show in Finder") { Finder.reveal(path()) }
+                if let delete {
+                    Divider()
+                    Button(deleteTitle) { delete() }
+                }
             }
         } else {
             self
         }
         #else
-        self
+        if enabled, export != nil || delete != nil {
+            contextMenu {
+                if let export { Button("Export bank…", systemImage: "square.and.arrow.up") { export() } }
+                if let delete { Button(deleteTitle, systemImage: "trash", role: .destructive) { delete() } }
+            }
+        } else {
+            self
+        }
         #endif
+    }
+}
+
+/// Browser > Delete bank… confirmation, drawn inside the browser like the
+/// other in-panel dialogs (the host owns the window). A click outside or
+/// Cancel (Esc on mac) keeps the bank.
+struct DeleteBankDialog: View {
+    @ObservedObject var model: SynthModel
+    let bank: PatchBankInfo
+
+    private var detail: String {
+        let patches = bank.count == 1 ? "1 patch" : "\(bank.count) patches"
+        #if os(macOS)
+        return "“\(bank.name)” (\(patches)) will be moved to the Trash."
+        #else
+        return "“\(bank.name)” (\(patches)) will be deleted. This can't be undone."
+        #endif
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.3).contentShape(Rectangle()).onTapGesture { model.bankToDelete = nil }
+            VStack(spacing: 0) {
+                Text("Delete bank?").font(.system(size: 11, weight: .semibold)).foregroundColor(Dlg.text)
+                    .frame(maxWidth: .infinity).frame(height: 22).background(Dlg.bar)
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(detail).font(.system(size: 11)).foregroundColor(Dlg.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Spacer()
+                        button("Cancel", fill: Dlg.bar) { model.bankToDelete = nil }
+                        button("Delete", fill: Theme.red) { model.deleteBank(id: bank.id) }
+                    }
+                }
+                .padding(14)
+            }
+            .frame(width: 340)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Dlg.bg))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.black.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: .black.opacity(0.5), radius: 10, y: 4)
+            #if os(macOS)
+            .background(WheelShield())
+            #endif
+        }
+    }
+
+    private func button(_ title: String, fill: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 11)).foregroundColor(Dlg.text)
+                .padding(.horizontal, 12).frame(minWidth: 64).frame(height: 22)
+                .background(RoundedRectangle(cornerRadius: 3).fill(fill))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -534,14 +616,18 @@ struct FileActions: ViewModifier {
                 model.fileAction = nil
                 present(action)
             }
-            .fileImporter(isPresented: $importing,
-                          allowedContentTypes: importAction == .loadPatch ? [sy1Type, .data] : [.item],
+            // .folder ALONE (not .directory, no file types next to it: iOS
+            // then navigates into folders) gives the picker its Open button
+            // inside a folder; one folder per pick.
+            .fileImporter(isPresented: $importing, allowedContentTypes: importTypes,
                           allowsMultipleSelection: importAction == .importBanks) { result in
                 guard case let .success(urls) = result else { return }
                 if importAction == .loadPatch, let url = urls.first {
                     let scoped = url.startAccessingSecurityScopedResource()
                     model.loadFile(url.path)
                     if scoped { url.stopAccessingSecurityScopedResource() }
+                } else if case let .exportBank(id) = importAction {
+                    if let dir = urls.first { model.exportBank(id: id, to: dir) }
                 } else {
                     model.importItems(urls)
                 }
@@ -554,7 +640,7 @@ struct FileActions: ViewModifier {
     #if os(macOS)
     private func run(_ action: FileAction) {
         switch action {
-        case .importBanks:
+        case .importBanks, .importFolder:
             let panel = NSOpenPanel()
             panel.message = "Import: bank folders, zip banks or .sy1 patches — copied into the library"
             panel.canChooseDirectories = true
@@ -574,12 +660,29 @@ struct FileActions: ViewModifier {
                 _ = model.saveFile(url.path)
                 model.loadLibrary(rescan: true)
             }
+        case .exportBank(let id):
+            guard let bank = model.banks.first(where: { $0.id == id }) else { return }
+            let panel = NSOpenPanel()
+            panel.message = "Export bank “\(bank.name)”: a folder holding its patches is created in the folder you choose"
+            panel.prompt = "Export"
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = true
+            if panel.runModal() == .OK, let url = panel.url { model.exportBank(id: id, to: url) }
         }
     }
     #else
+    private var importTypes: [UTType] {
+        switch importAction {
+        case .loadPatch: return [sy1Type, .data]
+        case .importFolder, .exportBank: return [.folder]
+        default: return [.zip, sy1Type, .data]
+        }
+    }
+
     private func present(_ action: FileAction) {
         switch action {
-        case .importBanks, .loadPatch:
+        case .importBanks, .importFolder, .loadPatch, .exportBank:
             importAction = action
             importing = true
         case .savePatch:

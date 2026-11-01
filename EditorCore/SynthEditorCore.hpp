@@ -130,6 +130,17 @@ public:
         return true;
     }
 
+    // Browser > Delete bank (PatchManager::DeleteBank); the sound playing
+    // stays, but no longer points into the deleted bank.
+    bool DeleteBank(int bank) {
+        library_.EnsureScanned();
+        if (bank < 0 || size_t(bank) >= library_.Library().Banks().size()) return false;
+        const std::string rel = ProgramBank(size_t(bank));
+        const bool ok = library_.DeleteBank(bank);
+        if (program_.slot >= 0 && program_.bank == rel) SetProgram({});
+        return ok;
+    }
+
     // Synth1 "write": the current sound, renamed, into a bank slot.
     bool WriteLibraryPatch(int bank, int slot, const std::string &name) {
         s2::Sy1Patch p = CurrentPatch();
@@ -182,6 +193,10 @@ public:
         h.slotPath = [](void *c, int32_t b, int32_t s) { return C(c)->Keep(C(c)->library_.SlotFile(b, s)); };
         h.newBank = [](void *c, const char *n) { return int32_t(C(c)->library_.NewBank(n ? n : "")); };
         h.movePatch = [](void *c, int32_t b, int32_t from, int32_t to) { return int32_t(C(c)->MovePatch(b, from, to)); };
+        h.deleteBank = [](void *c, int32_t b) { return int32_t(C(c)->DeleteBank(b)); };
+        h.exportBank = [](void *c, int32_t b, const char *d) {
+            return C(c)->Keep(d ? C(c)->library_.ExportBank(b, d) : std::string());
+        };
         h.importItems = [](void *c, const char *p) { return C(c)->Keep(C(c)->library_.Import(p ? p : "")); };
         h.midiCC = [](void *c, int32_t id) { return C(c)->MidiCC(id); };
         h.setMidiCC = [](void *c, int32_t id, int32_t cc) { C(c)->SetMidiCC(id, cc); };
