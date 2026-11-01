@@ -1,0 +1,526 @@
+# Synth2 (Oxo Synth2) — catch-up notes
+
+What a new contributor or AI coding agent must know to work on this repo:
+rules, architecture contracts, build / test commands, and the MEASURED facts
+about the original Synth1 (do not rediscover them). History lives in git;
+keep this file current, not chronological.
+
+## Rules
+
+- CLEAN ROOM: the original Synth1 is studied ONLY through its audio output
+  and its published AU interface (`tools/s1ref`). Never disassemble /
+  decompile the binary, never copy its artwork (e.g. its panel bitmap
+  `s1_07.png`).
+- PATCHES: no third-party preset FILES in the repo or the products
+  (`reference/presets/` is gitignored, local only). Bundling a
+  third-party bank needs the designer's explicit permission (sites listing
+  banks, e.g. rekkerd.org, do not license them). Patch / bank NAMES are fine
+  where they carry technical info, not as decoration (mocks, screenshots:
+  neutral names). `EngineCoreTests/legacy_fixture.txt` (values of real
+  legacy patches, no names) is technical test data.
+- `README.md`'s "Relationship to Synth1" section is agreed text: keep it.
+- `Shared/` must stay iOS-clean (mac-only code under `#if os(macOS)`). Fast
+  check: `xcrun --sdk iphonesimulator swiftc -typecheck -target
+  arm64-apple-ios17.0-simulator -import-objc-header EditorCore/OxoSynth2Bridge.h
+  Shared/*.swift` (the snapshot tool needs the same `-import-objc-header`).
+- `third_party/` submodules are never edited: SDK fixes are string patches
+  on GENERATED copies in `OxoSynth2VST3/CMakeLists.txt` (FATAL_ERROR if the
+  anchor moves).
+- Commit at every significant step; messages = subject + body, no AI
+  attribution trailers. Filter build / test output, never dump full logs.
+
+## What this is
+
+A faithful recreation of **Synth1** (Daichi Laboratory, freeware, modelled
+on the Clavia Nord Lead 2; abandoned, its mac AU is x86_64-only and dies
+with Rosetta). Same 99 parameters (same indices), loads `.sy1` patches and
+zip banks, SOUNDS THE SAME (tuned against renders of the original). GUI =
+Synth1's layout, redrawn. MIT, free. Formats: mac VST3 + the SDK's AUv2
+wrapper, iPad AUv3 (not released yet). Windows / Linux: welcome as ports.
+Stack: Steinberg VST3 SDK + header-only C++ engine + SwiftUI editor (no
+JUCE). Official builds ("Oxo Synth2", oxo-music.com / App Store) come from
+tagged commits of this repo.
+
+## Identity
+
+ONE SOURCE: `Identity.xcconfig` (repo root; forks change it, see README
+"Forks"). Gitignored `Identity.local.xcconfig` overrides any key (signing
+team, fork test). Xcode = project base configuration (targets use
+`$(OXO_BUNDLE_ID)`, Info.plists / entitlements `$(OXO_*)`, Swift reads
+`OxoAppGroup` from Info.plist). CMake parses it (`KEY = value` lines, no
+trailing comments, `//` cuts values → no URL schemes) → generated
+`OxoSynth2Identity.h` (VST3 FUIDs, names, folders) + configured
+`au-info.plist`; `build_vst3.sh` and the installer read it too. Code-visible
+strings go through `EditorCore/Identity.h` (generated header on the mac
+VST3, sandbox fallback elsewhere). NOT identity (never change, compatibility):
+state tag `'OXS2'`, `.sy1`, the `com.oxo.music.synth1-patch` imported UTI.
+Dev tools (au_harness, ui_snapshot/auhost) hardcode OXS2.
+
+Official values: product `Oxo Synth2`; VST3 `OxoSynth2.vst3`
+(`com.oxo.music.oxosynth2.vst3`); AUv2 `Oxo Synth2.component`
+(`com.oxo.music.oxosynth2.audiounit`), `aumu` `OXS2` `OXOM`, name "Oxo: Oxo
+Synth2"; iPad (iOS 17, iPad only) app `com.oxo.music.oxosynth2`, appex
+`com.oxo.music.oxosynth2.AudioUnit`, same AU codes, app group
+`group.com.oxo.music.oxosynth2`. The panel title reads "Synth2".
+Per-user settings: mac `~/Library/Application Support/Oxo Music/Oxo Synth2`
+(`midi_mappings.json`, `themes.json`, `settings.json`), iPad the appex's
+container. Bank library: mac `~/Music/Oxo Music/Oxo Synth2`, iPad `<app
+group>/Synth2`.
+VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
++ the two plists' AudioComponents integer `version` (by hand, 65536 = 1.0).
+
+## Layout
+
+- `EngineCore/` header-only `oxo::s2`: `Params.hpp` (the 99 params, native
+  ranges / defaults = the original's init patch), `Sy1Codec.hpp` (+ legacy
+  conversion), `Synth.hpp` / `Voice.hpp` / `Filter.hpp` / `Envelope.hpp` /
+  `Lfo.hpp` / `Effects.hpp` / `WaveTables.hpp` (engine), `MeasuredTables.hpp`
+  + `LegacyTables.hpp` (GENERATED from `reference/meta`), `InitPatch.hpp`,
+  `ParamFormat.hpp` (value labels; `DisplayName` = LCD name, effect knobs
+  per effect type), `MidiLearn.hpp` (learn table, CC scaling, JSON),
+  `PatchLibrary.hpp` (banks, zip reader, import, `PatchManager`),
+  `Jobs.hpp` (s1ref job format → our engine, WAV writer).
+- `EditorCore/` portable editor services: `OxoSynth2Bridge.h` (C hooks
+  between C++ and the Swift editor), `SynthEditorCore.hpp` (base of the
+  VST3 controller and the AUv3 instance), `State.hpp` (state chunk),
+  `Storage.hpp` (per-user files, mac library / factory paths), `Trash.hpp`.
+- `EngineCoreTests/` — `make -C EngineCoreTests test`.
+- `OxoSynth2VST3/` — processor / controller / entry / editor view, CMake
+  (SDK + AUv2 wrapper with the hidden-param auwrapper.mm patch, Swift
+  static lib `OxoSynth2Editor`, links zlib).
+- `Shared/` — SwiftUI editor used by both formats: `SynthModel.swift`
+  (`SynthHost` protocol + model polling the host at 30 Hz; MIDI learn
+  state, LCD readout, wheel gestures, browser keys), `HooksSynthHost.swift`
+  (the C hooks as a `SynthHost`), `SynthControls.swift` (widgets: KnobView,
+  ToggleButton (LED), CycleButton, Badge, LedRadio, WaveRadio / WaveCycle,
+  ValueDisplay, MenuDisplay, SectionBox, `.learnable` hotspots),
+  `SynthPanelView.swift` (the panel on a 770x560 canvas, absolute `.place`
+  / `.position` layout, BottomBar = LCD + write / menu),
+  `SynthLibraryViews.swift` (browser, write dialog, iPad file actions),
+  `SynthLibrary.swift` (iPad library / factory paths), `SynthTheme.swift`
+  (themes, ThemeDialog, LogoMenu), `SynthWheel.swift` (wheel monitor,
+  `WheelFeel`), `SynthTooltip.swift`, `SynthUpdateCheck.swift`,
+  `Resources/` (bundled banks, see Patch library).
+- `OxoSynth2.xcodeproj` (synchronized folders): `OxoSynth2/` = iPad app
+  (library manager: Import banks, "Open in"), `OxoSynth2AudioUnit/` = AUv3
+  appex (`AudioUnit/OxoSynth2AudioUnit.swift` AUAudioUnit shell,
+  `AudioUnitViewController.swift` factory + UI, `DSP/Synth2Instance.hpp`
+  engine + mailboxes + learn + SynthEditorCore, `DSP/Synth2Bridge.{h,mm}`
+  C API incl. the render loop), `Shared/` in both.
+- `tools/au_harness/main.mm` — mac check of the AUv3 C bridge (command in
+  the file): render, MIDI 1 + 2 (UMP), learn, state, library hooks.
+- `tools/ui_snapshot/` — `main.swift` renders the panel with a mock host to
+  PNG (modes: logo, update, …); `auhost.swift` opens the INSTALLED AUv2
+  in-process and snapshots the real editor. Build commands in the files.
+- `tools/app_icon/render.swift` — draws the app icon (command in the file).
+- `tools/unify2sy1.py <file|folder>... -o <dir>` — extracts Synth1 patches
+  from Unify presets (JUCE "VC2!" XML → base64 `stateInformation` → the
+  "Synth1 VST Chunk Data" blob, same word layout as the AU chunk); name =
+  layer title, version and raw values kept (converted / clamped on load).
+  One bank per library, `NNN_<preset>.sy1`, > 128 patches split "<bank>
+  (1)", "(2)".
+- `tools/s1ref/` — black-box harness for the ORIGINAL + measurement / fit
+  scripts (its README: chunk layout, param mapping, process-wide state).
+- `tools/s2render/` — renders the same jobs through our engine.
+- `tools/prepare_mac_installer`, `tools/mac_installer/` — pkg / dmg.
+- `reference/meta/` — committed measurements (params.json, nativemap.txt,
+  the tables' sources). `reference/renders/` + `reference/derived/`
+  (download, README "Reference data") and `reference/presets/` are
+  gitignored.
+- `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
+  `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: hidden-param
+  auwrapper + AudioUnitSDK deployment target.
+
+## Builds and tests
+
+- `./build_vst3.sh` → builds and installs `OxoSynth2.vst3` + `Oxo
+  Synth2.component` into ~/Library/Audio/Plug-Ins. `--no-install` = build
+  only. Validator 47/47 (`OxoSynth2VST3/build/bin/Release/validator
+  <bundle>`; run it with `HOME=$(mktemp -d)` to keep your library out of
+  it), `auval -v aumu OXS2 OXOM`.
+- iPad: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+  xcodebuild -project OxoSynth2.xcodeproj -scheme OxoSynth2AudioUnit
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO
+  build` (0 warnings in our code; `CLANG_WARN_COMMA = NO` — the engine's
+  compact comma style). Then `tools/au_harness`.
+- `make -C EngineCoreTests test`, `make -C tools/s2render`, CPU bench
+  `clang++ -std=c++20 -O2 tools/bench/main.cpp -o build/bench && ./build/bench`
+  (16 voices, one core: LP12 x90, LP24 x80, LPDL x35, detune+sub x23, all
+  fx x70 realtime), `make -C tools/s1ref` (x86_64, needs the original AU).
+- Python: `.venv` (numpy, scipy) for `tools/s1ref` scripts.
+- MAC INSTALLER: `tools/prepare_mac_installer [--skip-build]
+  [--skip-notarize]` → `dist/mac/OxoSynth2-<ver>-<build>-macOS.{pkg,dmg}`
+  (gitignored). Components `auv2` + `vst3` (pkg ids
+  `<OXO_BUNDLE_ID>.{auv2,vst3}.pkg`), macOS 14+, universal, bundles NOT
+  RELOCATABLE, the AU's nested plugin.vst3 staged as a real copy (in the
+  build tree it is a symlink). Never touches home folders (runs as root).
+  Templates `tools/mac_installer/distribution.xml` +
+  `resources/{welcome,conclusion}.html` (`__PRODUCT__` etc.). Signing env
+  `OXO_SIGN_ID_APP` / `OXO_SIGN_ID_INSTALLER` / `OXO_NOTARY_PROFILE`;
+  notarization is the default. Under a sandbox `pkgbuild` prints `write:
+  Permission denied` lines but succeeds. While testing the pkg, remove the
+  ~/Library dev copies (same UIDs twice).
+- UPDATE CHECK (mac): menu > "Check for updates…" fetches
+  `https://<OXO_VENDOR_WEBSITE>/releases.json` (`{ products: { <slug>: {
+  page, mac: { version, build, url }, win: … } } }`), looks up
+  `OXO_UPDATE_PRODUCT` (empty = no menu entry: forks, iPad, tools) +
+  `mac`, compares with CFBundleShortVersionString / CFBundleVersion: newer
+  = higher BUILD only (the version is only shown), absent entry = latest.
+  In-panel `UpdateDialog`. Releasing an official mac build = bump
+  `oxo_synth2: mac:` in the oxo-music.com site's `config/releases.yml`.
+
+## Parameters and state
+
+- IDs 0..98 = Synth1 index = `.sy1` line index = original AU param ID.
+  Values are NATIVE integers (`.sy1` values). VST3 normalization uses the
+  SDK's discrete convention (`FromNormalized`).
+- 99 = master VOLUME (Synth1's "vol" left of the LCD, `kVolumeParamId`):
+  host param (automatable) but NOT a patch param: never in a .sy1, patch
+  loads leave it, the state chunk keeps it. 0..127, MEASURED law (Synth1
+  chunk word 651, 64 = unity, 32 = -6.9 dB, 127 = +10.9 dB, 0 = silence) =
+  `tables::kVolumeGain`. Job line `w <word> <value>` = raw chunk word. Not
+  learnable.
+- 94 = polyphony (1..32). 86–89 = MIDI ctrl routing (hidden, -1..65535
+  like the original AU, -1 = none: src = status<<8|cc e.g. 0xB001, 0xE000
+  bend; assign = param index; the menu offers Synth1's 51 targets in its
+  order). Naming quirk: params 50 / 51 are called speed / amount sens in
+  Params.hpp but 50 drives assign1 (default lfo1 DEPTH); keys kept for
+  saved MIDI-learn maps.
+- Hidden proxies: pitch bend 1000, channel pressure 1001, CC n = 1100 + n
+  (IMidiMapping). Hidden read-only OUTPUT params: 1300 = MIDI learn "last
+  CC" token; 1301..1304 = voice activity for the panel's 2x16 grid (8
+  voices x 2 bits each, `Synth::VoiceStates`: 0 idle, 1 releasing, 2 held;
+  sent on change; AUv3: atomic after each render, hook `voiceStates`).
+- STATE CHUNK (`EditorCore/State.hpp` `PluginState`; AUv3 fullState key
+  "OXS2" = same bytes): `'OXS2'` + u32 version 4 + u32 master volume + i32
+  program slot + u32 len + bank folder (relative to the library root) +
+  u32 len + theme (the instance's palette, JSON hex map, opaque to C++, ""
+  = never set) + `.sy1` text. v1 / v2 restore at volume 64, no program;
+  v1..v3 no theme.
+- STARTUP PROGRAM (Synth1: program 001 of bankfolder0): a fresh instance
+  plays the first patch of the first bank holding one (`FirstProgram`,
+  scans only up to that bank; the factory bank comes first; VST3 processor
+  + controller and the AUv3 instance each compute it; session state
+  overrides). The program location (`SynthEditorCore::Program()`, hook
+  `loadedProgram`, VST3 message "OxoProgram") drives the LCD / browser
+  selection, survives editor reopen and sessions; Init / a patch file
+  clear it.
+- LEGACY `.sy1` CONVERSION (MEASURED, `Sy1Codec.hpp` ConvertLegacy +
+  `tools/s1ref/sy1.py` convert_legacy): the original converts on load by
+  EXACT version: no ver line = 100, 100, 105 / 106, 107 / 108; any other
+  ver (incl. 101..104, 109+) is untouched. Tables `reference/meta/legacy.json`
+  (`measure_legacy.py`: chunk version word 140) → `gen_legacy.py` →
+  `LegacyTables.hpp`. 100 / 105 / 106: decay / release times, filter amount
+  (unipolar → bipolar), delay level → d/w, chorus time / rate / feedback;
+  100 also attack, sustain, gain, velocity, LFO speed, osc2 fine; params
+  the version lacked are FORCED, routing 86..89 → init wheel routing.
+  Specials: wheel sens 50 / 51 = 64 + floor(s·(127−b)·63/127²), b = RAW
+  lfo1 depth 44 / speed 43; unison voices 93 = 2 poly / 4 mono (38 ≠ 0),
+  detune 75 = 48 / 70 (100–106) or a per-mode table (107 / 108). Arp beat
+  33 / delay time 35 are NOT converted.
+  OUT-OF-RANGE VALUES (`measure_out_of_range.py`): both loaders keep them,
+  the original PLAYS each as the nearest in-range value (bit-identical:
+  osc2 pitch, filter type 5 / 6, filter amount 128, arp type 0 / 5, arp oct
+  4, arp beat 19..64, delay 20..40 = 19, lfo dest 0 = dest 1 (not off),
+  chorus type 0 / 5, mod env dest 3 / 4, unison pitch 49..85; booleans 2 /
+  3 = on) → plain `ClampValue` in ParseSy1.
+  Check: `check_legacy.py [--fixture] [bank folders]` (legacy patches +
+  random ones of each version vs the original, 0 mismatches) →
+  `EngineCoreTests/legacy_fixture.txt`. Source of the lead: the unofficial
+  v1.12 manual (Z. Nikolic 2011: version history + per-version param table).
+
+## Patch library (`EngineCore/PatchLibrary.hpp`, tests PatchLibraryTests.cpp)
+
+- ONE library folder we own, no references to outside folders, no zip
+  banks read in place. First run creates the root + an empty "User" bank.
+- Bank = 128 SLOTS; slot n = file `NNN.sy1` (Synth1 naming; a leading
+  number 1..128 counts: "012_Lead.sy1"), other names fill the free slots in
+  name order. Every folder with .sy1 files (or empty) is a bank,
+  sub-folders are banks "parent / sub" (a folder holding only folders =
+  container); loose .sy1 in the root = bank named after the root. Hidden
+  names are skipped.
+- FACTORY BANK: `Shared/Resources/Synth2 Factory/*.sy1` → mac VST3 bundle
+  `Contents/Resources/Synth2 Factory` (CMake resources; the AUv2 nests the
+  VST3), iPad appex resources (Xcode explicit folder, excluded from the
+  app). Found at run time: mac `storage::FactoryRoot()` (dladdr of our own
+  binary), iPad `SynthLibrary.factoryRoot` → `Synth2Create(lib, factory)`.
+  Bank "Synth2 Factory" listed FIRST, `readOnly` (Write / Move refuse; no
+  delete / drag; write dialog skips it). Updated with the plugin. Program
+  bank token `:factory` (`kFactoryProgramBank`), not a path. Its 001 = the
+  INIT patch.
+- STARTER BANKS (currently none shipped): `Shared/Resources/Synth2 Starter
+  Banks/<bank>/*.sy1` → bundle `Resources/Synth2 Starter Banks` (sibling
+  of the factory folder; CMake loop per bank, Xcode explicit folder).
+  `PatchManager::Configure` → `SeedStarterBanks`: each bank not yet listed
+  in `<library>/.starter_banks` is copied (hidden temp folder + rename,
+  race-safe) as a normal user bank, then listed; a name already in the
+  library is only listed. Never updated / restored afterwards; a bank
+  added in a later version gets copied. Happens on first plugin load (the
+  installer never touches homes).
+- `build_vst3.sh` empties both bundled folders before building (Xcode's
+  copy phase never deletes a removed patch).
+- A ZIP FOUND IN THE LIBRARY (any depth) on a rescan (load, browser open,
+  Refresh) = an import: extracted next to itself, then moved to the Trash
+  (`Trash.hpp`; no Trash e.g. iOS → deleted); LCD shows (10 s) "X.zip
+  imported and moved to Trash" (`TakeNotice` → hook `libraryNotice`). A zip
+  without .sy1 stays, ignored.
+- IMPORT (`ImportItems`, hook `importItems`, iPad app via
+  `OxoSynth2/LibraryImport.cpp`): COPIES into the root. Folders copied
+  (only .sy1), zips EXTRACTED into a folder of their name (one wrapping
+  folder dropped, __MACOSX / dot files skipped, non-UTF-8 names cleaned),
+  a Synth1 `zipbank/` folder merges into its parent, loose .sy1 →
+  "Imported" bank's next free slots; never clobbers ("Bank 2"). No export
+  (Finder). Sessions store the patch, never a bank ref.
+- WRITE (Synth1): dialog = banks + 128-slot grid + name field + "New
+  bank…" (the only in-app way to make one); writes `NNN.sy1` (replaces a
+  differently named file that held the slot), "Overwrite NNN" when
+  occupied; default target = the loaded slot if writing back into its
+  bank, else the first empty slot.
+- MOVE (browser drag and drop): renames every patch of the bank to its
+  `NNN.sy1` in two phases (hidden temp names), an occupied target swaps.
+- Browser header: Import… / Open library folder (mac) / Refresh / Close;
+  rescans on every open. Right click on a bank / slot = Show in Finder
+  (mac). Rename / delete / share banks = Finder. iPad: system file picker,
+  no Finder actions.
+
+## Editor (behaviour contracts)
+
+- Plumbing: editor → C hooks (`OxoSynth2Bridge.h`) → `SynthEditorCore`
+  (patch name / serial, patch files, library, `MakeHooks`; subclassed by
+  the VST3 controller and the AUv3 instance); Swift side `HooksSynthHost`.
+  A patch load = begin/perform/endEdit on all 99 params (host-visible) +
+  `OxoPatchName` message (the processor keeps the name for the state
+  chunk); `patchSerial` tells the UI to refresh.
+- Panel = Synth1's layout and colours (khaki panel, dark title strips,
+  black knobs, green button LEDs, red radio LEDs, wave icon grids, cyan
+  displays; Osc / LFO / Wheel-MIDI left, Amp / Filter / Arp middle, Effect
+  / EQ / Delay / Chorus / Voice right). Knobs: vertical drag (Shift fine),
+  double-click = INIT value, wheel (full range = 1440 pt, Shift 6x finer;
+  displays / radios 33 pt per step; one host gesture per burst, ends after
+  0.4 s idle). Type / dst / range buttons: click = next, Shift-click =
+  back. ctrl src / assign = pop-up menus. Effect type = in-panel 2 x 5 grid
+  (`EffectTypeMenu`); phaser level reads feedback %. First click acts in
+  an unfocused window (`acceptsFirstMouse`).
+- INIT = `EngineCore/InitPatch.hpp` (`kInitPatchValues`, name INIT):
+  Initialize patch and the double-click value. Params.hpp defaults stay the
+  ORIGINAL's init (.sy1 missing-line fallback, legacy loading, VST3
+  defaults).
+- Bottom LCD: line 1 "NNN:name" (click = browser) + ◀ ▶ (next / previous
+  NON-EMPTY slot, rolls over banks), line 2 = bank "NN:name" or a 1.5 s
+  readout ("filter freq: 64", learn / library messages). write = write
+  dialog; menu = Initialize patch | Load / Save patch file… | MIDI Learn |
+  Themes… | Check for updates… (mac). The version box in the title band
+  opens the GitHub project (`SynthPanelView.projectURL`).
+- BROWSER KEYS (mac, `SynthModel.browserKey`): arrows load at once (up /
+  down = ◀ ▶, left / right = next column, nearest non-empty slot), Return /
+  Enter / Esc close (write dialog: Esc only), Esc closes the logo menu.
+  Routed by `Synth2HostingView`: local NSEvent monitor + own keyDown; Logic
+  fallback = editor is the front window.
+- MIDI LEARN: menu > MIDI Learn → every control wears a hotspot (dim =
+  unlearned, bright = armed, blue + CC badge = learned); tap arms,
+  double-tap clears, the next CC (any channel, 1..127) is assigned, one CC
+  may drive several params; "Exit MIDI Learn" chip; never survives the
+  editor. Table = PLUGIN-GLOBAL `midi_mappings.json` ({param key: cc}),
+  empty by default. The controller owns + saves it and sends "OxoMidiLearn"
+  (99 x int32) to the processor, which scales a learned CC onto the param
+  (`ScaledValueForCC`) and reports an OUTPUT param change; every CC also
+  emits the token on param 1300. The CC keeps its engine role (wheel,
+  routing). AUv3: handled in the render, same law.
+- THEMES: menu > Themes… = in-panel `ThemeDialog` (AUv3 can't open
+  windows), dragged by its title bar, own colour editor (no system panel),
+  `WheelShield` keeps wheel events off the knobs below. 13 colours
+  (`ThemeColor`); the rest derives (`Theme` struct, `@Environment(\.theme)`).
+  Factory themes `ThemePalette.factory` (Synth2 = default, Blue, Gray Dark,
+  Gray Light, Red, Warm, Synth1), then user themes (Save / Delete). The
+  palette is PER INSTANCE, stored in the host session (state chunk v4,
+  hooks `themeText` / `setThemeText`, VST3 message "OxoTheme"), never in a
+  .sy1; changing it also becomes the per-user default for new instances
+  (`themes.json` "current"); an instance without a session theme adopts
+  that default.
+- LOGO MENU (mac only): click on the "Synth2" title = in-panel menu
+  (`LogoMenu`): UI size 75..200 % of 700 pt (= Synth1 at its 150 %; the
+  770 pt canvas is only the drawing grid), themes. Resize = C callback
+  passed to `OxoSynth2EditorCreate` → `plugFrame->resizeView`. Window
+  aspect-locked, width in NSUserDefaults `oxo.synth2.editorWidth`.
+- TOOLTIPS: only `.oxoTruncationTooltip` on cut patch / bank names in the
+  browser (first 0.5 s, then instant while warm); no help tips, no
+  `.help()`; hover via `onContinuousHover`.
+- iPad: same panel scaled to fit, centred. The AU parameter tree (99
+  params, address = index, NATIVE values) is the host truth; observer →
+  `Synth2Instance::SetFromHost` (atomic + dirty bit, applied at the next
+  render); UI edits → hooks → instance → AUParameter.setValue (.touch /
+  .value / .release); render-time automation is sample-accurate. MIDI 1 +
+  UMP (MIDI 2.0 scaled to 7 bit). Tempo from host blocks. Hosting
+  controller `safeAreaRegions = []` + `.ignoresSafeArea(.keyboard)`; every
+  text field sits at the TOP of its dialog so the keyboard never hides it.
+
+## Engine facts (MEASURED on the original — do not rediscover)
+
+Measurement scripts: `tools/s1ref/measure_*.py`, `fit_*.py` → `reference/meta/*.json`
+→ `tools/s1ref/gen_tables.py` → `EngineCore/MeasuredTables.hpp` (generated).
+Compare: `tools/s1ref/compare.py <group> [substr]` (groups: presets, sweeps,
+pitch, filter, velocity; rebuild s2render first). Any .sy1 folder:
+`compare_sy1.py <folder> [--per-bank=N] [--seed=S] [--wav=DIR]` (needs the
+original AU; keeps both renders for listening).
+
+- Levels: osc full scale 1 internally; output = x * 0.2 * gain[g] * vel.
+  Sine/saw/tri amplitude 0.2 at gain 64 vel 127; pulse = (saw(p)-saw(p+d))/2
+  (half amplitude), d = pw/254 (127 = square); the FINAL d (after LFO /
+  mod env) is clamped to [1.25/254, 1 − 1.375/254]: pw 0 = pw 1, never
+  silent. Noise uniform x1.1265.
+- Osc: per-note band-limited tables (EVERY harmonic below Nyquist, alias
+  free); osc silent when its note index > 127. Fundamentals of all shapes in
+  phase (saw falling +1 at phase 0, tri peak at 0.25). osc1 shapes 0 sine 1
+  saw 2 pulse 3 tri; osc2 1 saw 2 pulse 3 tri 4 noise; sub 0 sine 1 tri 2 saw
+  3 square, sub phase-locked to osc1, auto level w = g/(g+32). Mix linear.
+  osc2 pitch = integer-semitone table (±60), fine/tune 1 cent/step dead zone
+  62..66. kbd track off = fixed 220 Hz. Osc1 detune: main + 8 copies at
+  ±1,3,5,7 × d cents, d = 20 v/127, each ×0.297 (sine 0.288).
+  FM: inst f1 = f1 (1 + beta[v] osc2_norm) (table, to ~102). Ring: osc2 ×
+  osc1_norm. Sync hard: NAIVE reset of osc2 to phase 0 (same alias energy
+  as the original to 0.1 dB; do not band-limit). Synced noise: the original
+  restarts its noise generator from a fixed state at every osc1 wrap
+  (pitched).
+- Fixed output lowpass: bilinear one-pole, analog 22 kHz, NO prewarp.
+- Amp env: linear attack 0.5 ms·2^(v/8.05); decay/release exponential
+  tau table (same law); sustain = curved table. Filter env = same times,
+  LINEAR sustain. Velocity: dB = -15 (sens/64)(127-vel)/126.
+- Cutoff knob GLIDE (`measure_cutoff_glide.py`, job line `pt <s> <id>
+  <norm>` = timed AU param): a new cutoff value ramps LINEARLY over 50 ms
+  whatever the step (`CutoffRamp`, snaps while silent). Other knobs: gain
+  ~instant, res / pw / mix not measured cleanly yet.
+- Filter: LP12/HP12/BP12 = Chamberlin SVF ×2 iterations (input held),
+  f = 2 sin(pi fc/2fs), fc = 16.7·2^(c/12.624) (c ≤ 125), d = 1-r,
+  in gain 1-0.7r; output AGC (T 1.427, q 0.883, att 1.2 ms, rel 0.2 s).
+  LP24 = 4 bilinear one-poles + unit-delay feedback, fc table,
+  k = (0.0297 res - 0.076)·comp[c], in-loop AGC (T 1.6). LPDL
+  (`fit_lpdl.py`, ~0.5 dB): linear 303-style coupled ladder, feedback
+  high-passed at 100 Hz, out = (y3+y4)/2, w/k/g tables per res×cutoff
+  (fitted on SMALL-signal TFs: `measure_filter.py --types 4 --mix 10 --out
+  filter_tf_lpdl_small.npz`, `fit_lpdl.py --in ...`), 2× oversampled
+  trapezoidal. NONLINEAR (`measure_lpdl_nl.py`): input x·1.3/g → tanh;
+  feedback k·f → tanh(2kf)/2 (NOT a per-stage tanh nor an AGC on k).
+  Saturation AFTER filter: y = (1+a)x/(1+a|x|), a table. Order: osc →
+  filter → sat → amp. Cutoff mod in knob units: env (amt-64)·1.984 (amount
+  clamps below 16), kbd track table pivot key 48, vel switch scale table.
+- MIDI ctrl routing (`measure_wheel.py`, exact on 418 points): src word
+  (0xB0nn CC, 0xE000 bend, 0xD000 pressure) ADDS round(v * d * 128 / (63 *
+  127)) knob units to the assign param (live, never written to the patch),
+  d = sens - 64 above 64, sens - 63 below 63, 63 / 64 = off; clamped.
+  Engine keeps `base_` (patch) and `values_` (played). Init patch: CC1 ->
+  lfo1 depth / speed at sens 74. Pressure 0..127 like a CC; pitch bend is
+  BIPOLAR v = (bend−8192)/64. Targets whose range is not 0..127 (key shift,
+  bend range, unison pitch) are NOT routed. Not modelled: s1's pitch bend
+  deviates up to ~0.1 semi from linear.
+- Mono / legato: a new note retriggers in mono (new velocity), glides in
+  legato; releasing it falls back to the previous held key, mono
+  RETRIGGERS there (last velocity), legato does not.
+- Voice allocation: ROUND ROBIN (next idle voice after the last started).
+  Stealing: the oldest RELEASED voice first, then the oldest held one.
+- Patch changes under HELD KEYS keep the notes playing (hold a note, browse
+  patches). Stuck-free rules (fuzz test
+  `RandomPatchSwitchesUnderHeldKeysLeaveNoStuckNote`): the mono key stack
+  follows every key in EVERY play mode; All Notes Off / Reset clear it and
+  the arp keys; arp on takes the held keys, arp off gives them voices back.
+- Sustain pedal CC 64 (>= 64 down): released keys held (arp keys too)
+  until pedal up; CC 120 / 123 clear held keys. Not measured.
+- LFO: global, free-running from instance creation; types 0 saw↓ 1 tri
+  (-1 at 0) 2 square (+ first) 3 S&H 4 smooth 5 sine; Hz = 0.084·2^(s/12.05);
+  dests 1 osc2 pitch 2 osc1+2 pitch 3 cutoff 4 amp 5 pw 6 FM 7 pan.
+  Tempo sync: 30 steps, step = floor(s·30/128), cycle = `Lfo::kSyncBeats`
+  16 bars (s 0) .. 1/64T (127) = Synth1's display list; NO host-beat phase
+  lock (synced LFOs free-run, the arp starts at the key press).
+  Depths (key-synced slow square probes): pitch = bipolar table
+  (kLfoPitchCents, 6000 ct at 127); cutoff / amp / pan UNIPOLAR, u =
+  (lfo+1)/2: cutoff += (125 - cutoff)·depth/127·u; amp gain = 1 -
+  depth/127·(1-u); pan q = lfo·(1-(1-depth/127)^3), gain toward side
+  1+|q|/2, away 1-|q|. PW (time-domain duty per cycle): duty w moves toward
+  1 (lfo > 0) / 0 (lfo < 0) by depth/127·|lfo| of the room left, never
+  wraps. FM: knob += (127 - knob)·depth/127·u, fractional knob, beta
+  interpolated (probe saturates above knob ~100).
+  BOTH LFOs ON ONE DEST (`measure_lfo_sum.py`): pitch = sum of cents;
+  cutoff / FM / pw / pan = the law on the depth-weighted SUM (Σ d·u for
+  cutoff / FM, Σ d·lfo for pw / pan; pan unclamped, pw clamps); amp =
+  PRODUCT of the per-LFO gains.
+  Probe rule: calibrate cutoff_probe with the SAME timing on the SAME
+  engine.
+- Phase knobs: osc phase (91) 0 = free phases (s1 free-running, ours
+  random); > 0 = osc1 starts at 0, osc2 at (v-1)/126·180°, detune copy i at
+  kCopyPhaseDeg[i]·(v-1)/126 (Voice.hpp). Unison phase (92): voice i starts
+  kPhaseDeg[i]·v/127 later; with osc phase 0 s1 acts as v = 127.
+- Mod env amount m = (amt-64)/63 above 64, /64 below. Pitch = ±60
+  semis·m·env. PW = the LFO's room-left law with m·env. FM = room-left in
+  FM-knob units with m·g: g = env during the attack, during the DECAY g = 1
+  + ln(env)/ln(1e4) (FM offset falls LINEARLY to 0 at 9.2 taus).
+- Unison: voices start phase-coherent, spread evenly ±D (table), odd
+  voices + (pitch-24) semis, no level compensation. Portamento, pan
+  measured (tables).
+- Delay: spread = one side later by 100 ms·10^((|v-64|-63)/21) (0 at 64);
+  delay / EQ tone share one law (LP 190 Hz·2^(t/8.7) below 64, HP above).
+  Arp gate 0 = silent.
+- Chain order (`measure_fx_order.py`): voices → effect → EQ → delay →
+  chorus.
+- EQ (`measure_eq.py`): peak f0 = 50·320^(freq/127), (level−64)·50/127 dB,
+  analog-matched Zolzer peak, Q 3.18·2^((q−64)/38.16), cut = inverse of
+  the boost.
+- CHORUS (`measure_chorus.py`): per-channel lines, voice delay = base·(1 +
+  D·sin(ωt − θ)), D = (100^(depth/127) − 1)/99, one sine LFO free-running
+  from creation, 2.94 Hz·2^((rate−64)/8.89), rate 0 = 0.01 Hz; types 1–3
+  L→L / R→R (R θ 0° type 1, 90° types 2 = 3), type 4 L→L 0°, R→L 90°, L→R
+  180°, R→R 270°; comb feedback 0.99·(fb−64)/64; wet = level/127, dry
+  unity.
+- EFFECT SECTION (`measure_effect.py`, `measure_effect_time.py`,
+  `reference/meta/effect.json`; laws in the EffectUnit comment):
+  distortions = drive table → curve → RBJ HP → RBJ LP 400 Hz·40^(ctl2/127)
+  Q3 → gain (level+2)/129, no dry (a.d.1 = fitted asymmetric tanh in a 69
+  Hz negative-feedback loop); deci = hold ctl1+1 samples, floor quantiser,
+  14 kHz one-pole; r.m. = sine 8000^(ctl1/127) Hz; comp = one-pole |x|
+  detector + soft-knee leveller; phasers = 2/4/8/12 allpasses, LEVEL =
+  FEEDBACK (0.99·(lv−64)/64), ctl1 = sweep depth, ctl2 = rate, a bouncing
+  log-frequency ramp around 1271 Hz (starts at 254.6 Hz).
+
+## Measurement methods (reuse them)
+
+- Reference = the original AU via `build/s1ref/s1ref` (x86_64, Rosetta).
+  ONE PROCESS PER RENDER (`s1.render_many` does it, parallel): a 2nd
+  instance in a process starts with other osc phases / PRNG; the 1st is
+  bit-exact repeatable. The 0.25 s pre-roll counts (LFOs free-run in it).
+  A fresh Synth1 instance loads program 001 of bankfolder0 (its
+  `jp.daichi.synth1` prefs; scripts back up / restore them).
+- Python API (`tools/s1ref/s1.py`): `s1.patch(p0=.., p19=..)` = neutral DRY
+  patch (osc1 saw, LP12 open, no LFO/fx) + overrides; `render_many(specs,
+  ours=False|True)` (ours = s2render), `tone_amp`, `harmonics`, `key_hz`.
+  Helpers: `envelope.py`, `pitch.py`, `instfreq.py`, `cutoff_probe.py`
+  (effective cutoff in LP12 knob units), `filtermodels.py`, `fit_*.py`.
+- IDENTICAL-NOISE TRICK: osc2 noise is the same sequence in every fresh
+  process, so H(f) = Pxy/Pxx against a flat reference render (HP12 cut 0)
+  gives exact complex transfer functions (filters, EQ, delay tone, ...).
+  Pulse pw 0 is NOT silence (narrow pulse, it excites LPDL
+  self-oscillation): silence osc1 with mix 127 instead.
+- Level tricks: lower an oscillator with mix.
+- Old manuals: EN https://daichilab.sakura.ne.jp/softsynth/synmanu/readmeeng.html,
+  JA (more complete, Shift-JIS) .../synmanu/readme.html.
+- Native value ranges and the AU normalized mapping: reference/meta/
+  nativemap.txt; state chunk word layout: tools/s1ref/README.md.
+- Reference corpus (`reference/renders`, download in README): regenerate
+  with `tools/s1ref/corpus.py` while Rosetta exists; pack with
+  `tools/s1ref/pack_reference.sh`. The presets group is anonymized
+  (`patch0001`…).
+
+## Status and open items
+
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.56
+  dB, spec 3.41 dB, env 3.74 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
+  arp random sequence (+ S&H / smooth LFO / noise sequences: not the
+  original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top
+  cutoffs.
+- Worst presets: patch0106 (+18 dB), patch0025, patch0163 (sync + FM + arp
+  + fx combos), patch0010 (LPDL + smooth random LFO). A resonant LP24
+  pulled shut by a strongly negative env with a slow attack stays louder
+  in the original. PW law gap: full-ish LFO / mod env depth lands ~1.5 /
+  254 short near the extremes.
+- iPad AUv3: built and harness-tested, device testing / App Store release
+  pending.
+- Known GUI gaps: loading a patch = 99 host undo steps in some DAWs; old
+  Latin-1 / Shift-JIS patch names show '?' in the browser.

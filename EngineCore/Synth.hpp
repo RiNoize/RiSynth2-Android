@@ -1,0 +1,501 @@
+#pragma once
+
+// Oxo Synth2 engine: a Synth1 (Daichi) recreation, tuned against renders of
+// the original (tools/s1ref). Header-only, deterministic (seeded PRNG), no
+// allocation on the audio thread after SetSampleRate.
+
+#include "Effects.hpp"
+#include "Lfo.hpp"
+#include "Params.hpp"
+#include "Voice.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdint>
+
+namespace oxo::s2 {
+
+inline constexpr int kMaxVoices = 32;
+
+class Synth {
+public:
+    Synth() {
+        SetPatch(DefaultValues());
+        SetSampleRate(44100.0);
+    }
+
+    void SetSampleRate(double sr) {
+        sampleRate_ = sr > 0 ? sr : 44100.0;
+        for (Voice &v : voices_) v.Prepare(sampleRate_);
+        delay_.Prepare(sampleRate_);
+        chorus_.Prepare(sampleRate_);
+        eq_.Prepare(sampleRate_);
+        effect_.Prepare(sampleRate_);
+    }
+    double SampleRate() const { return sampleRate_; }
+
+    void SetPatch(const PatchValues &values) {
+        for (int i = 0; i < kParamCount; ++i) SetParam(i, values[i]);
+    }
+    // base_ = the patch; values_ = what the engine plays (base_ + MIDI ctrl
+    // routing offsets, see ApplyRouting).
+    void SetParam(int id, int32_t value) {
+        if (id < 0 || id >= kParamCount) return;
+        const bool arpWas = values_[kArpOn] != 0;
+        base_[id] = values_[id] = ClampValue(id, value);
+        ApplyRouting();
+        if (id == kArpOn && arpWas != (values_[kArpOn] != 0)) ArpSwitched();
+    }
+    int32_t Param(int id) const { return base_[id]; }
+    const PatchValues &Values() const { return base_; }
+    int32_t EffectiveParam(int id) const { return values_[id]; }
+    int GatedVoices() const {
+        int n = 0;
+        for (const Voice &v : voices_) n += v.Active() && v.Gate();
+        return n;
+    }
+    // Voice activity for the panel's grid: 2 bits per voice (bits 2i, 2i+1),
+    // kVoiceIdle / kVoiceReleasing / kVoiceHeld.
+    static constexpr uint64_t kVoiceIdle = 0, kVoiceReleasing = 1, kVoiceHeld = 2;
+    uint64_t VoiceStates() const {
+        uint64_t s = 0;
+        for (int i = 0; i < kMaxVoices; ++i)
+            if (voices_[i].Active()) s |= (voices_[i].Gate() ? kVoiceHeld : kVoiceReleasing) << (2 * i);
+        return s;
+    }
+
+    void SetTransport(double bpm, double ppq, bool playing) {
+        tempo_ = bpm > 0 ? bpm : 120.0;
+        ppq_ = ppq;
+        playing_ = playing;
+    }
+
+    void NoteOn(int key, int velocity) {
+        if (velocity <= 0) return NoteOff(key);
+        key &= 127;
+        keyDown_[key] = true;
+        keyVelocity_[key] = uint8_t(std::clamp(velocity, 1, 127));
+        sustained_[key] = false;
+        if (values_[kArpOn]) return ArpNoteOn(key, velocity);
+        VoiceNoteOn(key, velocity);
+    }
+
+    // Sustain pedal (CC 64): a key released while the pedal is down is held
+    // (arpeggiator included) until the pedal comes up.
+    void NoteOff(int key) {
+        key &= 127;
+        keyDown_[key] = false;
+        if (sustain_) {
+            sustained_[key] = true;
+            return;
+        }
+        ReleaseKey(key);
+    }
+
+    void SetSustain(bool down) {
+        if (sustain_ == down) return;
+        sustain_ = down;
+        if (down) return;
+        for (int k = 0; k < 128; ++k)
+            if (sustained_[k]) {
+                sustained_[k] = false;
+                if (!keyDown_[k]) ReleaseKey(k);
+            }
+    }
+
+private:
+    // A patch change switched the arp while keys are down (the browser keeps
+    // notes playing): on = the held keys become the arp's (it arpeggiates
+    // them), off = the arp's keys play their own voices again. Without this
+    // a key would be released by the wrong path and stick.
+    void ArpSwitched() {
+        if (values_[kArpOn]) {
+            for (Voice &v : voices_)
+                if (v.Active() && v.Gate()) v.Release();
+            heldCount_ = 0;
+            for (int k = 0; k < 128; ++k)
+                if (keyDown_[k] || sustained_[k]) ArpNoteOn(k, keyVelocity_[k]);
+            return;
+        }
+        int keys[32];
+        const int count = arpCount_;
+        std::copy(arpKeys_, arpKeys_ + count, keys);
+        if (arpPlaying_ >= 0) VoiceNoteOff(arpPlaying_);
+        arpPlaying_ = -1;
+        arpCount_ = 0;
+        for (int i = 0; i < count; ++i) VoiceNoteOn(keys[i], keyVelocity_[keys[i]]);
+    }
+
+    void ReleaseKey(int key) {
+        const bool arpKey = std::find(arpKeys_, arpKeys_ + arpCount_, key) != arpKeys_ + arpCount_;
+        if (arpKey) ArpNoteOff(key);
+        if (values_[kArpOn] && arpKey) return; // the arp plays it
+        // arp off, or a key pressed before a patch change switched the arp on:
+        // it plays its own voice (left alone if the arp happens to play that note)
+        if (!values_[kArpOn] || key != arpPlaying_) VoiceNoteOff(key);
+    }
+
+    void VoiceNoteOn(int key, int velocity) {
+        bool anyGate = false;
+        for (const Voice &v : voices_) anyGate |= v.Active() && v.Gate();
+        if (!anyGate) { // (manual) key sync resets the phase when no key was held
+            if (values_[kLfo1KeySync]) lfo_[0].ResetPhase();
+            if (values_[kLfo2KeySync]) lfo_[1].ResetPhase();
+        }
+        const int mode = values_[kPlayMode]; // 0 poly, 1 mono, 2 legato
+        const bool porta = values_[kPortaTime] > 0;
+        // The held-key stack follows every key in EVERY mode: a patch change
+        // with keys down (the browser keeps notes playing) must not leave a
+        // released key on it, or mono falls back to it = a stuck note.
+        RemoveHeld(key);
+        held_[heldCount_ < 32 ? heldCount_++ : 31] = key;
+        if (mode != 0) {
+            // Mono / legato: the held-key stack decides; one voice (or one
+            // unison stack) keeps sounding; mono retriggers, legato glides (measured).
+            const bool legatoPlay = anyGate;
+            if (anyGate) {
+                const bool glide = porta && (!values_[kPortaAuto] || legatoPlay);
+                for (Voice &v : voices_)
+                    if (v.Active()) v.ChangeNote(key, velocity, mode == 1, glide);
+                return;
+            }
+        }
+        const double from = lastPitch_;
+        lastPitch_ = key;
+        if (!values_[kUnisonOn]) {
+            Voice &v = AllocateVoice();
+            if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
+            v.Start(key, velocity, values_, rng_, ++ageCounter_);
+            return;
+        }
+        // (measured) unison: N voices evenly over +-D cents, pan spread
+        // (64 = mono, 0/127 = hard opposite), odd voices shifted by pitch - 24.
+        const int n = std::clamp<int>(values_[kUnisonVoices], 2, 8);
+        const double d = tables::kUnisonDetuneCents[values_[kUnisonDetune]];
+        const double spread = (64 - values_[kUnisonPan]) / 64.0;
+        const uint64_t age = ++ageCounter_;
+        const Rng shared = rng_; // (measured) stacked voices start phase-coherent
+        // (measured) unison phase shift: voice i starts kPhaseDeg[i] * v / 127
+        // degrees later (fixed per voice, any voice count); with osc phase 0
+        // (free) the original behaves as v = 127.
+        static constexpr double kPhaseDeg[8] = {0, 62.2, 356.4, 60.5, 317.0, 281.5, 136.3, 303.1};
+        const double shift = (values_[kOscPhase] == 0 ? 127 : values_[kUnisonPhase]) / 127.0 / 360.0;
+        for (int i = 0; i < n; ++i) {
+            rng_ = shared;
+            const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
+            AllocateVoice().Start(key, velocity, values_, rng_, age, t * d, t * spread,
+                                  (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[i] * shift);
+        }
+    }
+
+    void RemoveHeld(int key) {
+        int n = 0;
+        for (int i = 0; i < heldCount_; ++i)
+            if (held_[i] != key) held_[n++] = held_[i];
+        heldCount_ = n;
+    }
+
+    void VoiceNoteOff(int key) {
+        RemoveHeld(key);
+        if (values_[kPlayMode] != 0) {
+            const int n = heldCount_;
+            if (n > 0) { // fall back to the previous held key
+                // (measured, measure_mono.py) mono retriggers the envelopes here
+                // (velocity of the last note kept), legato does not
+                const int back = held_[n - 1];
+                for (Voice &v : voices_)
+                    if (v.Active() && v.Note() == key) v.ChangeNote(back, -1, values_[kPlayMode] == 1, values_[kPortaTime] > 0);
+                lastPitch_ = back;
+                return;
+            }
+            for (Voice &v : voices_)
+                if (v.Active() && v.Gate()) v.Release();
+            return;
+        }
+        for (Voice &v : voices_)
+            if (v.Active() && v.Gate() && v.Note() == key) v.Release();
+    }
+
+    // ---- arpeggiator (measured: step = tempo division, gate = gate/127 of
+    // the step; types 1 updown 2 up 3 down 4 random; range 1..4 octaves).
+    // (measured, measure_beat_lock.py) NOT locked to the host beat: steps
+    // start at the key press. TODO(measure): random sequence.
+    void ArpNoteOn(int key, int velocity) {
+        if (arpCount_ == 0) {
+            arpStep_ = -1;
+            arpCountdown_ = 0;
+            arpDir_ = 1;
+        }
+        if (std::find(arpKeys_, arpKeys_ + arpCount_, key) != arpKeys_ + arpCount_) return;
+        if (arpCount_ < 32) arpKeys_[arpCount_++] = key;
+        std::sort(arpKeys_, arpKeys_ + arpCount_);
+        arpVelocity_ = velocity;
+    }
+    void ArpNoteOff(int key) {
+        int n = 0;
+        for (int i = 0; i < arpCount_; ++i)
+            if (arpKeys_[i] != key) arpKeys_[n++] = arpKeys_[i];
+        arpCount_ = n;
+        if (n == 0 && arpPlaying_ >= 0) {
+            VoiceNoteOff(arpPlaying_);
+            arpPlaying_ = -1;
+        }
+    }
+    int ArpNextKey() {
+        const int octaves = values_[kArpOctRange] + 1;
+        const int total = arpCount_ * octaves;
+        const int type = values_[kArpType];
+        if (type == 4) {
+            arpStep_ = int(rng_.NextU32() % uint32_t(total));
+        } else if (type == 3) {
+            arpStep_ = arpStep_ <= 0 ? total - 1 : arpStep_ - 1;
+        } else if (type == 2) {
+            arpStep_ = (arpStep_ + 1) % total;
+        } else {
+            if (total == 1) arpStep_ = 0;
+            else {
+                if (arpStep_ + arpDir_ >= total || arpStep_ + arpDir_ < 0) arpDir_ = -arpDir_;
+                arpStep_ = std::clamp(arpStep_ + arpDir_, 0, total - 1);
+            }
+        }
+        return arpKeys_[arpStep_ % arpCount_] + 12 * (arpStep_ / arpCount_);
+    }
+    // Samples until the next arp event (step or gate-off), INT_MAX if idle.
+    int ArpAdvance(int elapsed) {
+        if (!values_[kArpOn] || (arpCount_ == 0 && arpPlaying_ < 0)) return 1 << 30;
+        arpCountdown_ -= elapsed;
+        arpGateCountdown_ -= elapsed;
+        if (arpPlaying_ >= 0 && arpGateCountdown_ <= 0 && values_[kArpGate] < 127) {
+            VoiceNoteOff(arpPlaying_);
+            arpPlaying_ = -1;
+        }
+        if (arpCountdown_ <= 0 && arpCount_ > 0) {
+            const double step = kArpBeats[std::clamp<int>(values_[kArpBeat], 0, 18)] * 60.0 / tempo_ * sampleRate_;
+            arpAccum_ += step;
+            const int stepSamples = std::max(1, int(arpAccum_));
+            arpAccum_ -= stepSamples;
+            if (arpPlaying_ >= 0) VoiceNoteOff(arpPlaying_);
+            arpPlaying_ = ArpNextKey();
+            if (values_[kArpGate] > 0) VoiceNoteOn(arpPlaying_, arpVelocity_); // (measured) gate 0 = silent
+            else arpPlaying_ = -1;
+            arpCountdown_ += stepSamples;
+            arpGateCountdown_ = std::max(1, int(stepSamples * values_[kArpGate] / 127.0));
+        }
+        int next = arpCountdown_;
+        if (arpPlaying_ >= 0 && arpGateCountdown_ > 0) next = std::min(next, arpGateCountdown_);
+        return std::max(1, next);
+    }
+
+public:
+    void ControlChange(int cc, int value) {
+        cc &= 127;
+        cc_[cc] = std::clamp(value, 0, 127);
+        if (cc == 64) SetSustain(value >= 64);
+        else if (cc == 120 || cc == 123) AllNotesOff(cc == 120);
+        ApplyRouting();
+    }
+    void PitchBend(int value14) {
+        bend_ = value14 - 8192;
+        ApplyRouting();
+    }
+    void ChannelPressure(int value) {
+        pressure_ = std::clamp(value, 0, 127);
+        ApplyRouting();
+    }
+
+    // Menu > All notes off: every voice cut at once, every key / pedal /
+    // arp state forgotten (a stuck note can't survive it).
+    void Panic() {
+        AllNotesOff(true);
+        keyDown_.fill(false);
+        sustain_ = false;
+    }
+
+    void AllNotesOff(bool immediate) {
+        for (Voice &v : voices_) immediate ? v.Kill() : v.Release();
+        sustained_.fill(false);
+        heldCount_ = 0;
+        arpCount_ = 0;
+        arpPlaying_ = -1;
+    }
+
+    // (measured, reference/meta/wheel.json, exact on 418 points) MIDI ctrl
+    // routing: src word (status << 8 | data1: 0xB0nn CC nn, 0xE000 bend,
+    // 0xD000 channel pressure) adds round(v * d * 128 / (63 * 127)) knob
+    // units to the assigned parameter, v = controller 0..127, d = sens - 64
+    // above 64, sens - 63 below 63 (63 / 64 = off). (measured,
+    // measure_ctrl_span.py) targets whose range is not 0..127 (key shift,
+    // bend range, unison pitch, ...) are NOT routed by the original.
+    static int RouteOffset(double v, int sens, int span) {
+        const int d = sens >= 64 ? sens - 64 : sens <= 62 ? sens - 63 : 0;
+        const double x = double(v) * d * (span + 1) / (63.0 * 127.0);
+        return int(x >= 0 ? std::floor(x + 0.5) : -std::floor(-x + 0.5));
+    }
+
+    void Reset() {
+        for (Voice &v : voices_) v.Kill();
+        heldCount_ = 0;
+        arpCount_ = 0;
+        arpPlaying_ = -1;
+        delay_.Reset();
+        chorus_.Reset();
+        eq_.Reset();
+        effect_.Reset();
+        bend_ = 0;
+        pressure_ = 0;
+        cc_.fill(0);
+        sustain_ = false;
+        sustained_.fill(false);
+        keyDown_.fill(false);
+        ApplyRouting();
+    }
+
+    void Render(float *left, float *right, int frames) {
+        std::fill(left, left + frames, 0.0f);
+        std::fill(right, right + frames, 0.0f);
+        const double bendSemis = bend_ / 8192.0 * values_[kBendRange];
+        int toArp = ArpAdvance(0);
+        for (int pos = 0, n = 0; pos < frames; pos += n) {
+            n = std::min({kLfoBlock, frames - pos, toArp});
+            const double *lfo[2] = {nullptr, nullptr};
+            for (int k = 0; k < 2; ++k) {
+                // LFOs run even when off so their phase stays free-running;
+                // (measured) tempo-synced LFOs are NOT locked to the host beat.
+                const int speed = values_[k ? kLfo2Speed : kLfo1Speed];
+                const double hz = values_[k ? kLfo2TempoSync : kLfo1TempoSync] ? tempo_ / 60.0 / Lfo::SyncBeats(speed)
+                                                                                 : Lfo::SpeedHz(speed);
+                lfo_[k].Render(lfoBuf_[k], n, values_[k ? kLfo2Type : kLfo1Type], hz, sampleRate_);
+                if (values_[k ? kLfo2On : kLfo1On]) lfo[k] = lfoBuf_[k];
+            }
+            double cutoffStart = 0;
+            const double cutoffStep = CutoffRamp(n, cutoffStart);
+            for (Voice &v : voices_) v.Render(left + pos, right + pos, n, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+            toArp = ArpAdvance(n);
+        }
+        // (measured, measure_fx_order.py) voices -> effect -> EQ -> delay -> chorus
+        if (values_[kEffectOn]) effect_.Process(left, right, frames, values_);
+        eq_.Process(left, right, frames, values_);
+        if (values_[kDelayOn]) delay_.Process(left, right, frames, values_, tempo_);
+        if (values_[kChorusOn]) chorus_.Process(left, right, frames, values_);
+        else chorus_.Advance(frames, values_);
+        if (volume_ != 1.0 || volumeTarget_ != 1.0) { // master volume, linear ramp over the block
+            const double step = frames > 0 ? (volumeTarget_ - volume_) / frames : 0.0;
+            for (int i = 0; i < frames; ++i) {
+                volume_ += step;
+                left[i] = float(left[i] * volume_);
+                right[i] = float(right[i] * volume_);
+            }
+        }
+        volume_ = volumeTarget_;
+    }
+
+    // Master volume (kVolumeParamId, not a patch parameter): survives Reset.
+    void SetVolume(int32_t v) { volumeTarget_ = VolumeGain(ClampValue(kVolumeParamId, v)); }
+
+private:
+    // (measured, measure_ctrl_sources.py) CC / pressure 0..127; pitch bend is
+    // BIPOLAR: (bend - 8192) / 64, -128 .. +128 (centre = no offset).
+    double SourceValue(int word) const {
+        switch ((word >> 8) & 0xF0) {
+        case 0xB0: return cc_[word & 0x7F];
+        case 0xE0: return bend_ / 64.0;
+        case 0xD0: return pressure_;
+        default: return 0;
+        }
+    }
+
+    void ApplyRouting() {
+        for (int t : routed_)
+            if (t >= 0) values_[t] = base_[t];
+        static constexpr int kSrc[2] = {kCtrlSrc1, kCtrlSrc2}, kDst[2] = {kCtrlAssign1, kCtrlAssign2},
+                             kSens[2] = {kWheelSpeedSens, kWheelAmountSens};
+        for (int r = 0; r < 2; ++r) {
+            const int t = base_[kDst[r]];
+            routed_[r] = -1;
+            if (t < 0 || t >= kParamCount || kParams[t].min != 0 || kParams[t].max != 127) continue;
+            const int off = RouteOffset(SourceValue(base_[kSrc[r]]), base_[kSens[r]], kParams[t].max - kParams[t].min);
+            routed_[r] = t;
+            values_[t] = ClampValue(t, values_[t] + off);
+        }
+    }
+
+    // (measured, cutoff jumps through the AU parameter at 44.1 / 96 kHz) the
+    // cutoff knob GLIDES to a new value: a linear ramp over 50 ms whatever
+    // the step (40 -> 41 and 40 -> 100 alike), both ways. Without it, fast
+    // mouse moves step audibly. Returns the per-sample step for the next n
+    // samples (`start` = the knob at the block start) and moves cutoff_ to
+    // the block end; snaps while no voice sounds (nothing to hear).
+    static constexpr double kCutoffGlideSeconds = 0.05;
+    double CutoffRamp(int n, double &start) {
+        const double target = values_[kFilterFreq];
+        if (target != cutoffTarget_) {
+            cutoffTarget_ = target;
+            cutoffRate_ = std::abs(target - cutoff_) / (kCutoffGlideSeconds * sampleRate_);
+        }
+        const bool sounding = std::any_of(voices_.begin(), voices_.end(), [](const Voice &v) { return v.Active(); });
+        if (!sounding) cutoff_ = cutoffTarget_;
+        start = cutoff_;
+        const double left = cutoffTarget_ - cutoff_;
+        if (std::abs(left) <= cutoffRate_ * n) { // lands within this block
+            cutoff_ = cutoffTarget_;
+            return left / n;
+        }
+        const double step = left > 0 ? cutoffRate_ : -cutoffRate_;
+        cutoff_ += step * n;
+        return step;
+    }
+
+    Voice &AllocateVoice() {
+        // Round robin like Synth1 (its voice squares): the next idle voice
+        // after the last one started. (measured, measure_steal.py) at the
+        // limit a RELEASED voice goes first (oldest of those), only then the
+        // oldest held one.
+        const int limit = std::clamp<int>(values_[kPolyphony], 1, kMaxVoices);
+        Voice *oldest = nullptr, *released = nullptr, *pick = nullptr;
+        for (int k = 1; k <= limit && !pick; ++k) {
+            Voice &v = voices_[(lastVoice_ + k) % limit];
+            if (!v.Active()) pick = &v;
+            else if (Voice *&steal = v.Gate() ? oldest : released; !steal || v.Age() < steal->Age()) steal = &v;
+        }
+        if (!pick) pick = released ? released : oldest;
+        lastVoice_ = int(pick - voices_.data());
+        return *pick;
+    }
+
+    static constexpr int kLfoBlock = 64;
+    PatchValues base_{};
+    PatchValues values_{};
+    int routed_[2] = {-1, -1};
+    std::array<int, 128> cc_{};
+    int pressure_ = 0;
+    bool sustain_ = false;
+    std::array<bool, 128> keyDown_{}, sustained_{};
+    std::array<uint8_t, 128> keyVelocity_{};
+    std::array<Voice, kMaxVoices> voices_{};
+    int lastVoice_ = -1; // round robin
+    double cutoff_ = kParams[kFilterFreq].def, cutoffTarget_ = kParams[kFilterFreq].def, cutoffRate_ = 0; // knob glide
+    double volume_ = 1.0, volumeTarget_ = 1.0; // VolumeGain, ramped per Render
+    Lfo lfo_[2];
+    TempoDelay delay_;
+    Chorus chorus_;
+    Equalizer eq_;
+    EffectUnit effect_;
+    double lfoBuf_[2][kLfoBlock] = {};
+    Rng rng_;
+    double sampleRate_ = 44100.0;
+    double tempo_ = 120.0;
+    double ppq_ = 0.0;
+    bool playing_ = false;
+    int bend_ = 0;
+    int held_[32] = {};
+    int heldCount_ = 0;
+    double lastPitch_ = -1;
+    int arpKeys_[32] = {};
+    int arpCount_ = 0, arpStep_ = -1, arpDir_ = 1, arpVelocity_ = 100, arpPlaying_ = -1;
+    int arpCountdown_ = 0, arpGateCountdown_ = 0;
+    double arpAccum_ = 0;
+    uint64_t ageCounter_ = 0;
+};
+
+} // namespace oxo::s2

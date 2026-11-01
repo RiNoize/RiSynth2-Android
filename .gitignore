@@ -1,0 +1,17 @@
+.DS_Store
+build/
+.venv/
+__pycache__/
+xcuserdata/
+# Per-developer identity override (signing team, fork IDs), see Identity.xcconfig.
+Identity.local.xcconfig
+*.xcuserstate
+# Reference renders of the original Synth1 (multi-GB, regenerable while
+# Rosetta exists, back them up!) and the third-party preset banks.
+reference/renders/
+reference/presets/
+OxoSynth2VST3/build/
+OxoSynth2VST3/build.*.log
+EngineCoreTests/build/
+reference/derived/
+dist/
