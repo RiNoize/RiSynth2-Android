@@ -204,7 +204,7 @@ struct PatchBrowserView: View {
         VStack(spacing: 0) {
             header
             HStack(spacing: 0) {
-                bankList.frame(width: 240).frame(maxHeight: .infinity)
+                bankList.frame(width: 190).frame(maxHeight: .infinity)
                 Rectangle().fill(theme.edge).frame(width: 1)
                 // iOS: a ScrollView takes its ideal width otherwise
                 slotGrid.frame(maxWidth: .infinity, maxHeight: .infinity)
