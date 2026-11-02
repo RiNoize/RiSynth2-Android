@@ -313,7 +313,12 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   the VST3 controller and the AUv3 instance); Swift side `HooksSynthHost`.
   A patch load = begin/perform/endEdit on all 99 params (host-visible) +
   `OxoPatchName` message (the processor keeps the name for the state
-  chunk); `patchSerial` tells the UI to refresh.
+  chunk); `patchSerial` tells the UI to refresh. Before its edits a load
+  calls `PatchLoading()` (VST3 message "OxoPatchLoad", AUv3 atomic; host
+  setState / fullState too) → `Synth::ClearDelay`: the delay's echoes fade
+  out (15 ms), the line empties (O(1) age check, no fill), its input fades
+  back in, so the switch's transient never rings in a long feedback.
+  Chorus untouched.
 - Panel = Synth1's layout and colours (khaki panel, dark title strips,
   black knobs, green button LEDs, red radio LEDs, wave icon grids, cyan
   displays; Osc / LFO / Wheel-MIDI left, Amp / Filter / Arp middle, Effect

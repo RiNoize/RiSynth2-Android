@@ -73,6 +73,7 @@ public:
     int32_t LastCC() override { return lastCc_.load(std::memory_order_relaxed); }
     uint64_t VoiceStates() override { return voices_.load(std::memory_order_relaxed); }
     void AllNotesOff() override { panic_.store(true, std::memory_order_release); }
+    void PatchLoading() override { clearDelay_.store(true, std::memory_order_release); }
 
     // Parameter tree observer / UI edit / state restore (any non-audio thread).
     void SetFromHost(int id, int32_t value) {
@@ -91,6 +92,7 @@ public:
         vst3::PluginState st;
         if (!vst3::DecodeState(data, size, st)) return false;
         const s2::Sy1Patch &p = st.patch;
+        PatchLoading();
         SetFromHost(s2::kVolumeParamId, st.volume);
         for (int i = 0; i < s2::kParamCount; ++i) SetFromHost(i, p.values[size_t(i)]);
         RestoredTheme(st.theme);
@@ -112,6 +114,7 @@ public:
 
     void ApplyDirty() {
         if (panic_.exchange(false, std::memory_order_acquire)) synth_.Panic();
+        if (clearDelay_.exchange(false, std::memory_order_acquire)) synth_.ClearDelay();
         if (volumeDirty_.exchange(false, std::memory_order_acquire)) synth_.SetVolume(volume_.load(std::memory_order_relaxed));
         for (int w = 0; w < 2; ++w) {
             uint64_t bits = dirty_[size_t(w)].exchange(0, std::memory_order_acquire);
@@ -184,6 +187,7 @@ private:
     std::atomic<int32_t> volume_{s2::kVolumeParam.def}; // master volume: state chunk, not the patch
     std::atomic<bool> volumeDirty_{true};
     std::atomic<bool> panic_{false}; // menu > All notes off, done by the next render
+    std::atomic<bool> clearDelay_{false}; // a patch load (editor, fullState), ditto
     uint32_t ccCounter_ = 0;
     std::vector<float> scratchL_, scratchR_;
     void *editCtx_ = nullptr;

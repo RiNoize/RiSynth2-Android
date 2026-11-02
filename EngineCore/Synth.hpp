@@ -351,6 +351,10 @@ public:
         ApplyRouting();
     }
 
+    // A patch load (editor, host state): the delay empties with a short fade,
+    // so the switch's transient doesn't ring in a long feedback.
+    void ClearDelay() { delay_.Clear(); }
+
     void Render(float *left, float *right, int frames) {
         std::fill(left, left + frames, 0.0f);
         std::fill(right, right + frames, 0.0f);
@@ -377,6 +381,7 @@ public:
         if (values_[kEffectOn]) effect_.Process(left, right, frames, values_);
         eq_.Process(left, right, frames, values_);
         if (values_[kDelayOn]) delay_.Process(left, right, frames, values_, tempo_);
+        else delay_.ClearNow();
         if (values_[kChorusOn]) chorus_.Process(left, right, frames, values_);
         else chorus_.Advance(frames, values_);
         if (volume_ != 1.0 || volumeTarget_ != 1.0) { // master volume, linear ramp over the block

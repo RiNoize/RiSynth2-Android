@@ -64,6 +64,10 @@ tresult PLUGIN_API OxoSynth2Processor::notify(Vst::IMessage *message) {
         panic_ = true; // the audio thread owns synth_
         return kResultOk;
     }
+    if (message && strcmp(message->getMessageID(), "OxoPatchLoad") == 0) {
+        clearDelay_ = true; // sent before the load's parameter edits
+        return kResultOk;
+    }
     if (message && strcmp(message->getMessageID(), "OxoProgram") == 0) {
         const void *data = nullptr;
         uint32 size = 0;
@@ -131,6 +135,7 @@ tresult PLUGIN_API OxoSynth2Processor::setState(IBStream *state) {
         theme_ = st.theme;
     }
     for (int i = 0; i < s2::kParamCount; ++i) values_[i] = st.patch.values[i];
+    clearDelay_ = true;
     pending_ = true;
     return kResultOk;
 }
@@ -186,6 +191,7 @@ void OxoSynth2Processor::applyParameter(Vst::ParamID id, double normalized, int3
 tresult PLUGIN_API OxoSynth2Processor::process(Vst::ProcessData &data) {
     using Point = TimedInput;
     if (panic_.exchange(false)) synth_.Panic();
+    if (clearDelay_.exchange(false)) synth_.ClearDelay();
     if (pending_.exchange(false)) {
         for (int i = 0; i < s2::kParamCount; ++i) synth_.SetParam(i, values_[i].load());
         synth_.SetVolume(volume_.load());
