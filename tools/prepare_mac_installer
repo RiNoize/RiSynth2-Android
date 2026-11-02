@@ -7,7 +7,7 @@
 #
 # Derived from Oxo Drums' script, minus its factory library: no patches are
 # bundled (third-party banks need their designer's permission, see AGENTS.md
-# "Open source"), so the payload is just the two plug-ins.
+# Rules, "PATCHES"), so the payload is just the two plug-ins.
 #
 # NOTARIZATION IS THE DEFAULT: the point of this script is a releasable dmg,
 # and a signed-but-not-notarized one IS REFUSED once downloaded (Gatekeeper
