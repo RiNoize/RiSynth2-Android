@@ -186,12 +186,14 @@ public:
         // ---- cutoff modulation in knob units (measured): kbd track pivots on
         // key 48 (1 octave = 12.624 knob units), env amount (v - 64) * 1.984
         // knob units at env = 1, scaled by velocity when the switch is on.
-        // TODO: LFO -> cutoff.
+        // (measured, measure_filter_env.py) the env sweeps from base - 2.1
+        // (env 0) to the env-1 TARGET clamped to [-2, 125]: a target beyond
+        // the top still moves the cutoff over the whole attack / decay.
         const int filterType = p[kFilterType], filterRes = p[kFilterRes];
         const double cutoffBase = cutoffKnob + tables::kKbdTrack[p[kFilterKbdTrack]] * (note_ - 48) * (12.624 / 12.0);
-        const double envDepth = (std::max<int>(p[kFilterAmount], 16) - 64) * 1.984 * // (measured) clamps below 16
-                               
+        const double envDepth = (p[kFilterAmount] - 64) * 1.984 *
                                 (p[kFilterVelSwitch] ? tables::kFilterVelScale[velocity_] : 1.0);
+
         filterEnv_.Configure(sampleRate_, p[kFilterAttack], p[kFilterDecay], p[kFilterSustain], p[kFilterRelease],
                              Adsr::SustainLaw::Linear);
         amp_.Configure(sampleRate_, p[kAmpAttack], p[kAmpDecay], p[kAmpSustain], p[kAmpRelease]);
@@ -327,7 +329,8 @@ public:
 
             const double mixed = mix1 * osc1Out + mix2 * o2;
             // ---- filter -> saturation -> amp (measured order) ----
-            double cutoff = cutoffBase + cutoffStep * i + envDepth * filterEnv_.Next();
+            const double base = cutoffBase + cutoffStep * i, low = base - 2.1;
+            double cutoff = low + (std::clamp(base + envDepth, -2.0, 125.0) - low) * filterEnv_.Next();
             if (r[3]) cutoff += std::max(0.0, 125.0 - cutoff) * std::min(1.0, r[3].Unipolar(i)); // tops out (measured)
             filter_.SetParams(filterType, cutoff, filterRes);
             const double filtered = Saturate(filter_.Process(mixed), satA);

@@ -465,8 +465,12 @@ original AU; keeps both renders for listening).
   trapezoidal. NONLINEAR (`measure_lpdl_nl.py`): input x·1.3/g → tanh;
   feedback k·f → tanh(2kf)/2 (NOT a per-stage tanh nor an AGC on k).
   Saturation AFTER filter: y = (1+a)x/(1+a|x|), a table. Order: osc →
-  filter → sat → amp. Cutoff mod in knob units: env (amt-64)·1.984 (amount
-  clamps below 16), kbd track table pivot key 48, vel switch scale table.
+  filter → sat → amp. Cutoff mod in knob units: kbd track table pivot key
+  48; FILTER ENV (`measure_filter_env.py`) sweeps linearly from base − 2.1
+  (env 0) to the env-1 TARGET clamp(base + (amt-64)·1.984·velscale, −2,
+  125) (base = knob + kbd track; the TARGET is clamped, not the result: an
+  amount past the top still sweeps over the whole attack / decay; amount
+  linear down to 0), vel switch scale table.
 - MIDI ctrl routing (`measure_wheel.py`, exact on 418 points): src word
   (0xB0nn CC, 0xE000 bend, 0xD000 pressure) ADDS round(v * d * 128 / (63 *
   127)) knob units to the assign param (live, never written to the patch),
