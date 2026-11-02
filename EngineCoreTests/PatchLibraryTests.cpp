@@ -2,7 +2,9 @@
 
 #include "../EngineCore/PatchLibrary.hpp"
 
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 
 using namespace oxo::s2;
 namespace fs = std::filesystem;
@@ -314,6 +316,92 @@ OXO_TEST(StarterBanksAreSeededOnce) {
     fs::remove_all(base);
 }
 
+// Delete bank: a plain bank folder goes whole (Trash, or deleted without
+// one); a folder holding sub-banks and the root's own bank lose only their
+// .sy1 files; the factory bank and bad indices are refused.
+OXO_TEST(PatchManagerDeleteBank) {
+    const fs::path base = FreshDir("oxo_s2_delete_bank_test");
+    const fs::path root = base / "Synth2", factory = base / "Bundle" / kFactoryBankName, trash = base / "Trash";
+    for (const fs::path &d : {factory, root / "A", root / "B", root / "Sets" / "Sub", trash}) fs::create_directories(d);
+    WriteFile(factory / "001.sy1", "INIT\nver=112\n");
+    WriteFile(root / "A" / "001.sy1", "A1\nver=112\n");
+    WriteFile(root / "A" / "notes.txt", "x");
+    WriteFile(root / "B" / "001.sy1", "B1\nver=112\n");
+    WriteFile(root / "Sets" / "001.sy1", "S1\nver=112\n");
+    WriteFile(root / "Sets" / "Sub" / "001.sy1", "Sub1\nver=112\n");
+    WriteFile(root / "Loose.sy1", "Loose\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    std::vector<std::string> trashed;
+    m.SetTrash([&](const fs::path &p) {
+        trashed.push_back(p.filename().string());
+        std::error_code ec;
+        fs::rename(p, trash / p.filename(), ec);
+        return !ec;
+    });
+    m.Rescan();
+    const auto find = [&](const std::string &name) {
+        const auto &banks = m.Library().Banks();
+        for (size_t i = 0; i < banks.size(); ++i)
+            if (banks[i].name == name) return int(i);
+        return -1;
+    };
+    // factory, Synth2 (loose), A, B, Sets, Sets / Sub
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(6));
+    OXO_EXPECT(!m.DeleteBank(0) && fs::exists(factory / "001.sy1"));
+    OXO_EXPECT(!m.DeleteBank(-1) && !m.DeleteBank(99));
+
+    OXO_EXPECT(m.DeleteBank(find("A")));
+    OXO_EXPECT(!fs::exists(root / "A") && fs::exists(trash / "A" / "notes.txt"));
+    OXO_EXPECT_EQ(find("A"), -1);
+
+    OXO_EXPECT(m.DeleteBank(find("Sets")));
+    OXO_EXPECT(!fs::exists(root / "Sets" / "001.sy1") && fs::exists(root / "Sets" / "Sub" / "001.sy1"));
+    OXO_EXPECT_EQ(find("Sets"), -1);
+    OXO_EXPECT(find("Sets / Sub") >= 0);
+
+    OXO_EXPECT(m.DeleteBank(find("Synth2")));
+    OXO_EXPECT(fs::exists(root) && !fs::exists(root / "Loose.sy1") && fs::exists(root / "B" / "001.sy1"));
+    OXO_EXPECT_EQ(trashed.size(), size_t(3));
+
+    m.SetTrash(nullptr); // no Trash (iOS): deleted
+    OXO_EXPECT(m.DeleteBank(find("B")));
+    OXO_EXPECT(!fs::exists(root / "B") && !fs::exists(trash / "B"));
+    OXO_EXPECT_EQ(m.Library().Banks().size(), size_t(2)); // factory, Sets / Sub
+    fs::remove_all(base);
+}
+
+// Export bank: a new folder named after the bank's in the target (" 2" when
+// taken), its patches copied with their names, sub-banks left out; the
+// factory bank exports too; a missing target fails.
+OXO_TEST(PatchManagerExportBank) {
+    const fs::path base = FreshDir("oxo_s2_export_bank_test");
+    const fs::path root = base / "Synth2", factory = base / "Bundle" / kFactoryBankName, out = base / "Out";
+    for (const fs::path &d : {factory, root / "Sets" / "Sub", out}) fs::create_directories(d);
+    WriteFile(factory / "001.sy1", "INIT\nver=112\n");
+    WriteFile(root / "Sets" / "002.sy1", "S2\nver=112\n");
+    WriteFile(root / "Sets" / "Lead.sy1", "Lead\nver=112\n");
+    WriteFile(root / "Sets" / "notes.txt", "x");
+    WriteFile(root / "Sets" / "Sub" / "001.sy1", "Sub1\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto &banks = m.Library().Banks();
+    int sets = -1;
+    for (size_t i = 0; i < banks.size(); ++i)
+        if (banks[i].name == "Sets") sets = int(i);
+    OXO_EXPECT_EQ(m.ExportBank(sets, out), (out / "Sets").string());
+    std::string text;
+    OXO_EXPECT(ReadTextFile(out / "Sets" / "Lead.sy1", text) && text == "Lead\nver=112\n");
+    OXO_EXPECT(fs::exists(out / "Sets" / "002.sy1"));
+    OXO_EXPECT(!fs::exists(out / "Sets" / "notes.txt") && !fs::exists(out / "Sets" / "Sub"));
+    OXO_EXPECT_EQ(m.ExportBank(sets, out), (out / "Sets 2").string());
+    OXO_EXPECT_EQ(m.ExportBank(0, out), (out / kFactoryBankName).string());
+    OXO_EXPECT(fs::exists(out / kFactoryBankName / "001.sy1"));
+    OXO_EXPECT(m.ExportBank(sets, base / "missing").empty() && m.ExportBank(99, out).empty());
+    fs::remove_all(base);
+}
+
 // Browser drag and drop: move to an empty slot, swap with an occupied one;
 // files are renamed NNN.sy1 so an unnumbered one can't drift into a hole.
 OXO_TEST(PatchManagerMoveRenamesAndSwaps) {
@@ -343,4 +431,124 @@ OXO_TEST(PatchManagerMoveRenamesAndSwaps) {
     int files = 0;
     for ([[maybe_unused]] const auto &e : fs::directory_iterator(root / "Bank")) ++files;
     OXO_EXPECT_EQ(files, 2); // no temp left behind
+}
+
+// Rescans read a patch name only when its file changed (name cache keyed by
+// path + size + mtime): an edited file shows its new name.
+OXO_TEST(RescanRereadsChangedPatchNames) {
+    const fs::path base = FreshDir("oxo_s2_namecache_test");
+    const fs::path root = base / "Synth2";
+    fs::create_directories(root / "Bank");
+    WriteFile(root / "Bank" / "001.sy1", "First\nver=112\n");
+    WriteFile(root / "Bank" / "002.sy1", "Second\nver=112\n");
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    const auto slot = [&](int s) { return m.Library().Banks()[0].slots[size_t(s)].name; };
+    OXO_EXPECT_EQ(slot(0), std::string("First"));
+    WriteFile(root / "Bank" / "001.sy1", "Fresh\nver=112\n"); // same size
+    fs::last_write_time(root / "Bank" / "001.sy1", fs::last_write_time(root / "Bank" / "001.sy1") + std::chrono::seconds(2));
+    WriteFile(root / "Bank" / "003.sy1", "Third\nver=112\n");
+    m.Rescan();
+    OXO_EXPECT_EQ(slot(0), std::string("Fresh"));
+    OXO_EXPECT_EQ(slot(1), std::string("Second"));
+    OXO_EXPECT_EQ(slot(2), std::string("Third"));
+    fs::remove_all(base);
+}
+
+namespace {
+// Polls like the editor (UI thread) until the background scan is adopted.
+bool WaitScan(PatchManager &m) {
+    for (int i = 0; i < 2000 && m.Scanning(); ++i) {
+        m.PollRescan();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    m.PollRescan();
+    return !m.Scanning();
+}
+} // namespace
+
+// The browser opens at once: the rescan runs on a worker thread, the UI
+// thread adopts its list (revision bump) and the zip notices.
+OXO_TEST(BackgroundRescanIsAdoptedByPoll) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_test");
+    const fs::path root = base / "Synth2", src = base / "src";
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    const int before = m.Revision();
+    fs::create_directories(root / "Added");
+    WriteFile(root / "Added" / "001.sy1", "Added\nver=112\n");
+    fs::create_directories(src / "Z");
+    WriteFile(src / "Z" / "001.sy1", "Zipped\nver=112\n");
+    const std::string cmd = "cd '" + src.string() + "' && zip -q -r '" + (root / "Dropped.zip").string() + "' Z";
+    OXO_EXPECT(std::system(cmd.c_str()) == 0);
+    m.StartRescan();
+    OXO_EXPECT(m.Scanning());
+    OXO_EXPECT(WaitScan(m));
+    OXO_EXPECT(m.Revision() > before);
+    OXO_EXPECT(m.Json().find("\"Added\"") != std::string::npos);
+    OXO_EXPECT(m.Json().find("\"Dropped\"") != std::string::npos);
+    OXO_EXPECT_EQ(m.TakeNotice(), std::string("Dropped.zip imported (zip removed)"));
+    fs::remove_all(base);
+}
+
+// A library change made meanwhile on the UI thread (here a write) wins: the
+// worker's older list is dropped, never adopted over it.
+OXO_TEST(BackgroundRescanNeverOverwritesNewerEdits) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_write_test");
+    const fs::path root = base / "Synth2";
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    for (int round = 0; round < 20; ++round) {
+        m.StartRescan();
+        Sy1Patch p;
+        p.name = "Write " + std::to_string(round);
+        OXO_EXPECT(m.Write(0, 0, p));
+        OXO_EXPECT(WaitScan(m));
+        OXO_EXPECT_EQ(m.Library().Banks()[0].slots[0].name, p.name);
+    }
+    fs::remove_all(base);
+}
+
+// Browser drag of a patch onto a bank: a byte copy into the first free slot
+// (NNN.sy1), the source untouched; a full or read-only bank refuses.
+OXO_TEST(CopyPatchFillsFirstFreeSlot) {
+    const fs::path base = FreshDir("oxo_s2_copy_test");
+    const fs::path root = base / "Synth2", factory = base / "Factory";
+    fs::create_directories(root / "Src");
+    fs::create_directories(root / "Fav");
+    fs::create_directories(root / "Full");
+    fs::create_directories(factory);
+    WriteFile(factory / "001.sy1", "Factory\nver=112\n");
+    WriteFile(root / "Src" / "007_Lead.sy1", "Lead\r\nver=112\n0,2\n");
+    WriteFile(root / "Fav" / "001.sy1", "One\nver=112\n");
+    WriteFile(root / "Fav" / "003.sy1", "Three\nver=112\n");
+    for (int s = 0; s < kBankSlots; ++s) WriteFile(root / "Full" / SlotFileName(s), "X\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto bank = [&](const char *name) {
+        for (size_t b = 0; b < m.Library().Banks().size(); ++b)
+            if (m.Library().Banks()[b].name == name) return int(b);
+        return -1;
+    };
+    const int src = bank("Src"), fav = bank("Fav"), full = bank("Full"), fac = bank(kFactoryBankName);
+    const int rev = m.Revision();
+    OXO_EXPECT_EQ(m.Copy(src, 6, fav), 1); // slot 002
+    OXO_EXPECT(m.Revision() > rev);
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[1].name, std::string("Lead"));
+    std::string a, b;
+    OXO_EXPECT(ReadTextFile(root / "Src" / "007_Lead.sy1", a) && ReadTextFile(root / "Fav" / "002.sy1", b) && a == b);
+    OXO_EXPECT_EQ(m.Copy(fac, 0, fav), 3);  // from the factory bank: allowed (slot 004)
+    OXO_EXPECT_EQ(m.Copy(src, 6, src), 0);  // its own bank: a duplicate
+    OXO_EXPECT_EQ(m.Copy(src, 6, full), -1); // full
+    OXO_EXPECT_EQ(m.Copy(src, 6, fac), -2);  // read-only
+    OXO_EXPECT_EQ(m.Copy(src, 5, fav), -2);  // empty source
+    m.Rescan(); // the files say the same
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[3].name, std::string("Factory"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(src)].slots[0].name, std::string("Lead"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(src)].slots[6].name, std::string("Lead"));
+    fs::remove_all(base);
 }

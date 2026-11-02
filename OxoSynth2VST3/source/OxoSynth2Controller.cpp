@@ -155,6 +155,14 @@ void OxoSynth2Controller::PatchNameChanged(const std::string &name) {
     }
 }
 
+void OxoSynth2Controller::PatchLoading() {
+    if (Vst::IMessage *message = allocateMessage()) {
+        message->setMessageID("OxoPatchLoad");
+        sendMessage(message);
+        message->release();
+    }
+}
+
 void OxoSynth2Controller::AllNotesOff() {
     if (Vst::IMessage *message = allocateMessage()) {
         message->setMessageID("OxoAllNotesOff");

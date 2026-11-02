@@ -279,3 +279,55 @@ OXO_TEST(RandomPatchSwitchesUnderHeldKeysLeaveNoStuckNote) {
         if (held) return;
     }
 }
+
+// A patch change empties the delay: the echoes fade out (no click), then
+// silence, and the delay echoes new notes again.
+OXO_TEST(ClearDelayFadesOutEchoes) {
+    const auto setup = [](Synth &s) {
+        s.SetSampleRate(48000);
+        s.SetTransport(120, 0, false);
+        s.SetParam(kEffectOn, 0);
+        s.SetParam(kChorusOn, 0);
+        s.SetParam(kDelayOn, 1);
+        s.SetParam(kDelayTime, 5); // 1/4 beat = 125 ms
+        s.SetParam(kDelayFeedback, 120);
+        s.SetParam(kDelayDryWet, 127); // echoes only
+        s.SetParam(kDelaySpread, 64);
+        s.SetParam(kDelayTone, 64);
+        s.SetParam(kDelayType, 0);
+        s.NoteOn(60, 127);
+        Run(s, 4800);
+        s.Panic();
+        Run(s, 21000); // echoes only, no voice left; the clear lands inside an echo
+    };
+    const auto peak = [](const std::vector<float> &x, size_t from, size_t to) {
+        float p = 0;
+        for (size_t i = from; i < to; ++i) p = std::max(p, std::fabs(x[i]));
+        return p;
+    };
+    std::vector<float> kl(4800), kr(4800), l(4800), r(4800);
+    Synth kept;
+    setup(kept);
+    kept.Render(kl.data(), kr.data(), 4800);
+    OXO_EXPECT(peak(kl, 2400, 4800) > 0.01f); // without a clear the echoes go on
+
+    Synth s;
+    setup(s);
+    s.ClearDelay();
+    s.Render(l.data(), r.data(), 4800);
+    bool faded = true;
+    for (size_t i = 0; i < 960; ++i) {
+        faded &= std::fabs(l[i]) <= std::fabs(kl[i]) + 1e-6f;                       // never louder
+        if (i < 48) faded &= std::fabs(l[i] - kl[i]) <= 0.1f * std::fabs(kl[i]) + 1e-6f; // starts at full level
+    }
+    OXO_EXPECT(faded);
+    OXO_EXPECT(peak(kl, 0, 48) > 0.01f);
+    OXO_EXPECT_EQ(peak(l, 960, 4800), 0.0f); // empty after the fade (< 20 ms)
+    OXO_EXPECT_EQ(peak(r, 960, 4800), 0.0f);
+
+    s.NoteOn(60, 127);
+    Run(s, 4800);
+    s.Panic();
+    s.Render(l.data(), r.data(), 4800);
+    OXO_EXPECT(peak(l, 0, 4800) > 0.01f); // echoes again
+}

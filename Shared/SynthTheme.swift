@@ -424,9 +424,10 @@ struct ThemeDialog: View {
     }
 }
 
-/// Click on the "Synth2" logo (mac VST3 / AUv2: the host owns the window):
-/// UI sizes left (percent of `SynthPanelView.unitWidth`), themes right (factory, then
-/// the user's). A pick applies and closes, like Oxo Drums' logo menu.
+/// Click on the "Synth2" logo: UI sizes left (percent of
+/// `SynthPanelView.unitWidth`; only where the editor can resize its window =
+/// mac VST3 / AUv2, not the iPad AUv3), themes right (factory, then the
+/// user's). A pick applies and closes, like Oxo Drums' logo menu.
 struct LogoMenu: View {
     static let sizes = [75, 100, 115, 125, 140, 150, 200]
     private static let rowHeight: CGFloat = 20
@@ -444,14 +445,16 @@ struct LogoMenu: View {
         let theme = ThemePalette.factory.first { $0.palette == model.palette }.map { "f:" + $0.name }
             ?? store.userThemes.first { $0.palette == model.palette }.map { "u:" + $0.name }
         HStack(alignment: .top, spacing: 0) {
-            column("UI size") {
-                ForEach(Self.sizes, id: \.self) { p in
-                    row("s:\(p)", "\(p)%", active: p == size) {
-                        model.requestEditorWidth?(Double(SynthPanelView.unitWidth) * Double(p) / 100)
+            if let resize = model.requestEditorWidth {
+                column("UI size") {
+                    ForEach(Self.sizes, id: \.self) { p in
+                        row("s:\(p)", "\(p)%", active: p == size) {
+                            resize(Double(SynthPanelView.unitWidth) * Double(p) / 100)
+                        }
                     }
                 }
+                Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1).padding(.vertical, 6)
             }
-            Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1).padding(.vertical, 6)
             column("Theme") {
                 ForEach(ThemePalette.factory, id: \.name) { t in
                     row("f:" + t.name, t.name, active: theme == "f:" + t.name) { model.applyTheme(t.palette) }

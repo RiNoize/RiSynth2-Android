@@ -27,6 +27,7 @@ public:
     virtual void BeginEdit(int id) = 0;
     virtual void PerformEdit(int id, int32_t value) = 0; // host-visible, inside Begin/End
     virtual void EndEdit(int id) = 0;
+    virtual void PatchLoading() {}                        // before a load's edits: the DSP empties its delay
     virtual void PatchNameChanged(const std::string &) {} // e.g. tell the processor
     virtual void ProgramChanged(const s2::LibraryProgram &) {} // ditto (the state chunk keeps it)
     virtual void ThemeChanged(const std::string &) {}           // ditto
@@ -87,6 +88,7 @@ public:
     // A patch load = one host-visible edit per parameter (reaches the DSP,
     // undoable in hosts that record parameter edits).
     void ApplyPatch(const s2::Sy1Patch &patch) {
+        PatchLoading();
         for (int i = 0; i < s2::kParamCount; ++i) {
             BeginEdit(i);
             PerformEdit(i, s2::ClampValue(i, patch.values[i]));
@@ -128,6 +130,17 @@ public:
         if (program_.slot >= 0 && program_.bank == rel && (program_.slot == from || program_.slot == to))
             SetProgram({rel, program_.slot == from ? to : from});
         return true;
+    }
+
+    // Browser > Delete bank (PatchManager::DeleteBank); the sound playing
+    // stays, but no longer points into the deleted bank.
+    bool DeleteBank(int bank) {
+        library_.EnsureScanned();
+        if (bank < 0 || size_t(bank) >= library_.Library().Banks().size()) return false;
+        const std::string rel = ProgramBank(size_t(bank));
+        const bool ok = library_.DeleteBank(bank);
+        if (program_.slot >= 0 && program_.bank == rel) SetProgram({});
+        return ok;
     }
 
     // Synth1 "write": the current sound, renamed, into a bank slot.
@@ -173,6 +186,12 @@ public:
             return C(c)->json_.c_str();
         };
         h.rescanLibrary = [](void *c) { C(c)->library_.Rescan(); };
+        h.startLibraryScan = [](void *c) { C(c)->library_.StartRescan(); };
+        h.libraryRevision = [](void *c) {
+            C(c)->library_.PollRescan();
+            return int32_t(C(c)->library_.Revision());
+        };
+        h.libraryScanning = [](void *c) { return int32_t(C(c)->library_.Scanning()); };
         h.libraryNotice = [](void *c) { return C(c)->Keep(C(c)->library_.TakeNotice()); };
         h.libraryRoot = [](void *c) { return C(c)->Keep(C(c)->library_.Root().string()); };
         h.loadLibraryPatch = [](void *c, int32_t b, int32_t s) { return int32_t(C(c)->LoadLibraryPatch(b, s)); };
@@ -182,6 +201,11 @@ public:
         h.slotPath = [](void *c, int32_t b, int32_t s) { return C(c)->Keep(C(c)->library_.SlotFile(b, s)); };
         h.newBank = [](void *c, const char *n) { return int32_t(C(c)->library_.NewBank(n ? n : "")); };
         h.movePatch = [](void *c, int32_t b, int32_t from, int32_t to) { return int32_t(C(c)->MovePatch(b, from, to)); };
+        h.copyPatch = [](void *c, int32_t b, int32_t s, int32_t to) { return int32_t(C(c)->library_.Copy(b, s, to)); };
+        h.deleteBank = [](void *c, int32_t b) { return int32_t(C(c)->DeleteBank(b)); };
+        h.exportBank = [](void *c, int32_t b, const char *d) {
+            return C(c)->Keep(d ? C(c)->library_.ExportBank(b, d) : std::string());
+        };
         h.importItems = [](void *c, const char *p) { return C(c)->Keep(C(c)->library_.Import(p ? p : "")); };
         h.midiCC = [](void *c, int32_t id) { return C(c)->MidiCC(id); };
         h.setMidiCC = [](void *c, int32_t id, int32_t cc) { C(c)->SetMidiCC(id, cc); };

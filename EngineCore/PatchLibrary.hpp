@@ -27,9 +27,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <atomic>
 #include <functional>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace oxo::s2 {
@@ -180,14 +184,24 @@ inline std::filesystem::path UniquePath(const std::filesystem::path &p) {
     }
 }
 
-// Visible entries of a folder, in name order.
+// Visible entries of a folder, in name order. Entries keep the listing's
+// file type, so is_directory() costs no stat (big libraries).
+inline std::vector<std::filesystem::directory_entry> FolderEntries(const std::filesystem::path &dir) {
+    std::vector<std::pair<std::string, std::filesystem::directory_entry>> keyed;
+    std::error_code ec;
+    for (const auto &e : std::filesystem::directory_iterator(dir, ec)) {
+        const std::string fn = e.path().filename().string();
+        if (!IsHiddenName(fn)) keyed.push_back({Lower(fn), e});
+    }
+    std::sort(keyed.begin(), keyed.end(), [](auto &a, auto &b) { return a.first < b.first; });
+    std::vector<std::filesystem::directory_entry> items;
+    items.reserve(keyed.size());
+    for (auto &k : keyed) items.push_back(std::move(k.second));
+    return items;
+}
 inline std::vector<std::filesystem::path> FolderChildren(const std::filesystem::path &dir) {
     std::vector<std::filesystem::path> items;
-    std::error_code ec;
-    for (const auto &e : std::filesystem::directory_iterator(dir, ec))
-        if (!IsHiddenName(e.path().filename().string())) items.push_back(e.path());
-    std::sort(items.begin(), items.end(),
-              [](auto &a, auto &b) { return Lower(a.filename().string()) < Lower(b.filename().string()); });
+    for (const auto &e : FolderEntries(dir)) items.push_back(e.path());
     return items;
 }
 
@@ -225,6 +239,51 @@ inline bool ReadTextFile(const std::filesystem::path &path, std::string &out) {
     out.assign(std::istreambuf_iterator<char>(f), {});
     return true;
 }
+
+// Patch names (a .sy1's first line) by file: a rescan only opens new or
+// changed files (path + size + mtime), the rest comes from here. Thousands
+// of .sy1 = seconds of opens otherwise. Process-wide: every instance and
+// the background scans share it.
+class PatchNameCache {
+public:
+    static PatchNameCache &Shared() {
+        static PatchNameCache cache;
+        return cache;
+    }
+    bool Name(std::filesystem::directory_entry e, std::string &name) {
+        std::error_code ec;
+        e.refresh(ec); // one stat, then size + time come from the entry
+        const std::uintmax_t size = e.file_size(ec);
+        if (ec) return false;
+        const std::filesystem::file_time_type time = e.last_write_time(ec);
+        if (ec) return false;
+        const std::string key = e.path().string();
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const auto it = names_.find(key);
+            if (it != names_.end() && it->second.size == size && it->second.time == time) {
+                name = it->second.name;
+                return true;
+            }
+        }
+        std::ifstream f(e.path(), std::ios::binary);
+        if (!f) return false;
+        std::getline(f, name);
+        name = name.substr(0, name.find('\r'));
+        std::lock_guard<std::mutex> lock(mutex_);
+        names_[key] = {size, time, name};
+        return true;
+    }
+
+private:
+    struct Entry {
+        std::uintmax_t size;
+        std::filesystem::file_time_type time;
+        std::string name;
+    };
+    std::mutex mutex_;
+    std::unordered_map<std::string, Entry> names_;
+};
 
 // Synth1 slot number of a file name ("012.sy1" / "012_Lead.sy1" -> 11), -1 if none.
 inline int SlotFromFileName(const std::string &fileName) {
@@ -301,9 +360,27 @@ public:
         return true;
     }
 
-private:
-    static std::string FirstLine(const std::string &text) { return text.substr(0, text.find_first_of("\r\n")); }
+    // Browser drag of a patch onto a bank: a copy of its file (bytes kept)
+    // into the first free slot of `to` (its own bank too = a duplicate), as
+    // NNN.sy1. Returns the slot, -1 = `to` is full, -2 = refused / failed.
+    int Copy(size_t bank, size_t slot, size_t to) {
+        if (bank >= banks_.size() || to >= banks_.size() || slot >= size_t(kBankSlots) || banks_[to].readOnly ||
+            banks_[bank].slots[slot].Empty())
+            return -2;
+        const PatchRef src = banks_[bank].slots[slot];
+        PatchBank &dst = banks_[to];
+        std::error_code ec;
+        for (int s = 0; s < kBankSlots; ++s) {
+            const std::filesystem::path target = std::filesystem::path(dst.source) / SlotFileName(s);
+            if (!dst.slots[size_t(s)].Empty() || std::filesystem::exists(target, ec)) continue;
+            if (!std::filesystem::copy_file(src.file, target, ec)) return -2;
+            dst.slots[size_t(s)] = {src.name, target.string()};
+            return s;
+        }
+        return -1;
+    }
 
+private:
     // Numbered names take their slot, the rest fill free slots in name order.
     static void AssignSlots(PatchBank &bank, std::vector<std::pair<std::string, PatchRef>> files) {
         std::sort(files.begin(), files.end(), [](auto &a, auto &b) { return Lower(a.first) < Lower(b.first); });
@@ -324,7 +401,7 @@ private:
     void AddFactory(const std::filesystem::path &factory) {
         std::error_code ec;
         if (factory.empty() || !std::filesystem::is_directory(factory, ec)) return;
-        AddFolderBank(factory, kFactoryBankName);
+        AddFolderBank(factory, kFactoryBankName, FolderEntries(factory));
         banks_.back().readOnly = true;
     }
 
@@ -332,33 +409,39 @@ private:
     // after it.
     void ScanFolder(const std::filesystem::path &dir, const std::string &prefix, bool isRoot) {
         std::error_code ec;
-        if (!std::filesystem::is_directory(dir, ec)) return;
-        const auto items = FolderChildren(dir);
-        if (isRoot && std::any_of(items.begin(), items.end(), [](auto &p) { return IsSy1(p.filename().string()); }))
-            AddFolderBank(dir, dir.filename().string());
-        for (const auto &p : items) {
+        if (std::filesystem::is_directory(dir, ec)) ScanEntries(dir, FolderEntries(dir), prefix, isRoot);
+    }
+    // Every folder is listed once (its entries serve the bank and the walk).
+    void ScanEntries(const std::filesystem::path &dir, const std::vector<std::filesystem::directory_entry> &items,
+                     const std::string &prefix, bool isRoot) {
+        std::error_code ec;
+        if (isRoot && std::any_of(items.begin(), items.end(), [](auto &e) { return IsSy1(e.path().filename().string()); }))
+            AddFolderBank(dir, dir.filename().string(), items);
+        for (const auto &e : items) {
             if (found_) return;
-            if (!std::filesystem::is_directory(p, ec)) continue;
-            const std::string fn = p.filename().string();
+            if (!e.is_directory(ec)) continue;
+            const std::string fn = e.path().filename().string();
+            const auto children = FolderEntries(e.path());
             bool hasSy1 = false, hasDir = false;
-            for (const auto &c : FolderChildren(p)) {
-                hasSy1 |= IsSy1(c.filename().string());
-                hasDir |= std::filesystem::is_directory(c, ec);
+            for (const auto &c : children) {
+                hasSy1 |= IsSy1(c.path().filename().string());
+                hasDir |= c.is_directory(ec);
             }
-            if (hasSy1 || !hasDir) AddFolderBank(p, prefix + fn);
-            if (hasDir) ScanFolder(p, prefix + fn + " / ", false);
+            if (hasSy1 || !hasDir) AddFolderBank(e.path(), prefix + fn, children);
+            if (hasDir) ScanEntries(e.path(), children, prefix + fn + " / ", false);
         }
     }
 
-    void AddFolderBank(const std::filesystem::path &dir, const std::string &name) {
+    void AddFolderBank(const std::filesystem::path &dir, const std::string &name,
+                       const std::vector<std::filesystem::directory_entry> &items) {
         PatchBank bank;
         bank.name = name;
         bank.source = dir.string();
         std::vector<std::pair<std::string, PatchRef>> files;
-        for (const auto &f : FolderChildren(dir)) {
-            const std::string fn = f.filename().string();
-            std::string text;
-            if (IsSy1(fn) && ReadTextFile(f, text)) files.push_back({fn, {FirstLine(text), f.string()}});
+        for (const auto &f : items) {
+            const std::string fn = f.path().filename().string();
+            std::string patchName;
+            if (IsSy1(fn) && PatchNameCache::Shared().Name(f, patchName)) files.push_back({fn, {patchName, f.path().string()}});
         }
         AssignSlots(bank, std::move(files));
         banks_.push_back(std::move(bank));
@@ -641,6 +724,13 @@ inline std::string ImportItemsText(const std::filesystem::path &root, const std:
 
 class PatchManager {
 public:
+    PatchManager() = default;
+    PatchManager(const PatchManager &) = delete;
+    PatchManager &operator=(const PatchManager &) = delete;
+    ~PatchManager() {
+        if (worker_.joinable()) worker_.join();
+    }
+
     // `root` = the library folder (created with an empty "User" bank),
     // `factory` = the read-only factory bank folder in the plugin bundle; its
     // sibling kStarterBanksFolder is seeded into the library.
@@ -659,10 +749,47 @@ public:
 
     void Rescan() {
         EnsureRoot();
-        ExpandZips(root_);
+        ++generation_;
+        ExpandZips(root_, trash_, trashed_, removed_);
         lib_.Scan(root_, factory_);
         scanned_ = true;
+        ++revision_;
     }
+
+    // The same rescan on a worker thread (the browser opens at once, big
+    // libraries take a while). One at a time: a call while one runs is
+    // dropped (the running one started moments ago). PollRescan (the
+    // caller's thread, the editor's poll) adopts the result; a library
+    // change made in between (write, move, sync rescan...) wins, the
+    // worker's older list is dropped.
+    void StartRescan() {
+        if (worker_.joinable()) return;
+        EnsureRoot();
+        ready_ = false;
+        worker_ = std::thread([this, root = root_, factory = factory_, trash = trash_, gen = generation_] {
+            BackgroundScan s;
+            s.generation = gen;
+            ExpandZips(root, trash, s.trashed, s.removed);
+            s.lib.Scan(root, factory);
+            scan_ = std::move(s); // read by PollRescan after the join
+            ready_.store(true, std::memory_order_release);
+        });
+    }
+    // True = a new list was adopted (Revision() moved).
+    bool PollRescan() {
+        if (!worker_.joinable() || !ready_.load(std::memory_order_acquire)) return false;
+        worker_.join();
+        trashed_.insert(trashed_.end(), scan_.trashed.begin(), scan_.trashed.end()); // done either way
+        removed_.insert(removed_.end(), scan_.removed.begin(), scan_.removed.end());
+        const bool fresh = scan_.generation == generation_;
+        if (fresh) lib_ = std::move(scan_.lib), scanned_ = true, ++revision_;
+        scan_ = {};
+        return fresh;
+    }
+    bool Scanning() const { return worker_.joinable(); }
+    // Bumps on every change of the list (rescans, writes, an adopted
+    // background scan).
+    int Revision() const { return revision_; }
 
     // What the last rescans did to zips ("Bank.zip imported and moved to
     // Trash"), "" = nothing; cleared by the call.
@@ -688,7 +815,15 @@ public:
     }
     bool Write(int bank, int slot, const Sy1Patch &p) {
         EnsureScanned();
-        return bank >= 0 && slot >= 0 && lib_.Write(size_t(bank), size_t(slot), p);
+        if (bank < 0 || slot < 0 || !lib_.Write(size_t(bank), size_t(slot), p)) return false;
+        ++generation_, ++revision_;
+        return true;
+    }
+    int Copy(int bank, int slot, int to) {
+        EnsureScanned();
+        const int s = bank < 0 || slot < 0 || to < 0 ? -2 : lib_.Copy(size_t(bank), size_t(slot), size_t(to));
+        if (s >= 0) ++generation_, ++revision_;
+        return s;
     }
 
     // Browser drag and drop: the patch of slot `from` goes to slot `to`, an
@@ -726,6 +861,49 @@ public:
         Rescan();
         return ok;
     }
+    // Browser > Delete bank: its folder goes to the Trash (deleted where there
+    // is none), or only its .sy1 files when the folder also holds sub-folders
+    // (other banks) or is the root itself. Never the factory bank, never
+    // anything outside the root. Rescans.
+    bool DeleteBank(int bank) {
+        EnsureScanned();
+        const auto &banks = lib_.Banks();
+        if (bank < 0 || size_t(bank) >= banks.size() || banks[size_t(bank)].readOnly) return false;
+        const std::filesystem::path dir = banks[size_t(bank)].source;
+        const std::filesystem::path rel = dir.lexically_normal().lexically_relative(root_.lexically_normal());
+        if (root_.empty() || rel.empty() || *rel.begin() == "..") return false;
+        std::error_code ec;
+        const auto items = FolderChildren(dir);
+        const bool wholeFolder = rel != "." && std::none_of(items.begin(), items.end(), [&](auto &p) {
+            return std::filesystem::is_directory(p, ec);
+        });
+        bool ok = true;
+        if (wholeFolder) ok = Remove(dir);
+        else
+            for (const auto &p : items)
+                if (IsSy1(p.filename().string()) && !std::filesystem::is_directory(p, ec)) ok = Remove(p) && ok;
+        Rescan();
+        return ok;
+    }
+
+    // Browser > Export bank: a folder named after the bank's (" 2" when
+    // taken) is created in `dest` with the bank's patches, file names kept
+    // (so the slots stay; sub-banks are not part of it). Any bank, the
+    // factory one too. Returns the new folder, "" = failed.
+    std::string ExportBank(int bank, const std::filesystem::path &dest) {
+        EnsureScanned();
+        const auto &banks = lib_.Banks();
+        std::error_code ec;
+        if (bank < 0 || size_t(bank) >= banks.size() || !std::filesystem::is_directory(dest, ec)) return {};
+        const PatchBank &b = banks[size_t(bank)];
+        const std::filesystem::path out = UniquePath(dest / SafeName(std::filesystem::path(b.source).filename().string()));
+        if (!std::filesystem::create_directory(out, ec)) return {};
+        bool ok = true;
+        for (const PatchRef &p : b.slots)
+            if (!p.Empty()) ok = std::filesystem::copy_file(p.file, out / std::filesystem::path(p.file).filename(), ec) && ok;
+        return ok ? out.string() : std::string();
+    }
+
     std::string SlotFile(int bank, int slot) {
         EnsureScanned();
         return bank >= 0 && slot >= 0 ? lib_.SlotFile(size_t(bank), size_t(slot)) : std::string();
@@ -763,21 +941,45 @@ public:
     }
 
 private:
+    using TrashFn = std::function<bool(const std::filesystem::path &)>;
+    struct BackgroundScan {
+        int generation = 0;
+        PatchLibrary lib;
+        std::vector<std::string> trashed, removed;
+    };
+
     // A zip put into the library counts as an import: extracted into a
     // folder of its name next to it, then trashed (or every rescan would
     // extract it again). A zip without patches is left alone (ignored).
-    void ExpandZips(const std::filesystem::path &dir) {
+    // One expansion at a time process-wide (UI rescans, background scans).
+    static void ExpandZips(const std::filesystem::path &dir, const TrashFn &trash, std::vector<std::string> &trashed,
+                           std::vector<std::string> &removed) {
+        static std::mutex mutex;
+        std::lock_guard<std::mutex> lock(mutex);
+        ExpandZipsIn(dir, trash, trashed, removed);
+    }
+    static void ExpandZipsIn(const std::filesystem::path &dir, const TrashFn &trash, std::vector<std::string> &trashed,
+                             std::vector<std::string> &removed) {
         std::error_code ec;
-        for (const auto &p : FolderChildren(dir)) {
-            if (std::filesystem::is_directory(p, ec)) {
-                ExpandZips(p);
+        for (const auto &e : FolderEntries(dir)) {
+            const std::filesystem::path &p = e.path();
+            if (e.is_directory(ec)) {
+                ExpandZipsIn(p, trash, trashed, removed);
             } else if (Lower(p.extension().string()) == ".zip" &&
                        ExtractZipBank(p, UniquePath(dir / SafeName(p.stem().string()))) > 0) {
                 const std::string name = Utf8Clean(p.filename().string(), '?');
-                if (trash_ && trash_(p)) trashed_.push_back(name);
-                else if (std::filesystem::remove(p, ec)) removed_.push_back(name);
+                if (trash && trash(p)) trashed.push_back(name);
+                else if (std::filesystem::remove(p, ec)) removed.push_back(name);
             }
         }
+    }
+
+    // To the Trash, else deleted (iOS: no Trash).
+    bool Remove(const std::filesystem::path &p) {
+        if (trash_ && trash_(p)) return true;
+        std::error_code ec;
+        std::filesystem::remove_all(p, ec);
+        return !std::filesystem::exists(p, ec);
     }
 
     void EnsureRoot() const {
@@ -788,8 +990,12 @@ private:
     std::filesystem::path root_, factory_;
     PatchLibrary lib_;
     bool scanned_ = false;
-    std::function<bool(const std::filesystem::path &)> trash_;
+    TrashFn trash_;
     std::vector<std::string> trashed_, removed_;
+    int generation_ = 0, revision_ = 0; // generation: what a background scan must still match
+    std::thread worker_;
+    std::atomic<bool> ready_{false};
+    BackgroundScan scan_;
 };
 
 } // namespace oxo::s2

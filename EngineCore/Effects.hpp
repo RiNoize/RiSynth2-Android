@@ -51,11 +51,23 @@ public:
         buf_[1].assign(n, 0.0f);
         pos_ = 0;
         smoothL_ = smoothR_ = -1;
+        fadeLen_ = std::max(1, int(sr * kClearFadeSeconds));
+        fadeOut_ = 0;
+        Empty();
     }
     void Reset() {
-        for (auto &b : buf_) std::fill(b.begin(), b.end(), 0.0f);
-        tone_[0].Reset();
-        tone_[1].Reset();
+        fadeOut_ = 0;
+        Empty();
+    }
+    // A patch change: the echoes fade out, then the line empties and its
+    // input fades back in (no click either way), so the switch's transient
+    // never rings in a long feedback. Repeated calls during the fade keep it.
+    void Clear() {
+        if (!fadeOut_) fadeOut_ = fadeLen_;
+    }
+    // Delay off: nothing to hear, a pending clear empties at once.
+    void ClearNow() {
+        if (fadeOut_) fadeOut_ = 0, Empty(), inGain_ = 0;
     }
 
     void Process(float *l, float *r, int n, const PatchValues &p, double tempo) {
@@ -82,12 +94,19 @@ public:
             else f.SetBypass();
         }
         const size_t size = buf_[0].size();
+        const double fadeStep = 1.0 / fadeLen_;
         for (int i = 0; i < n; ++i) {
+            double out = 1;
+            if (fadeOut_ > 0) {
+                if (--fadeOut_ == 0) Empty(), inGain_ = 0, smoothL_ = tl, smoothR_ = tr; // the new patch's time, no glide
+                else out = fadeOut_ * fadeStep;
+            }
             // tape-like glide toward a new time
             smoothL_ += (tl - smoothL_) * 0.0005;
             smoothR_ += (tr - smoothR_) * 0.0005;
             const double el = tone_[0].Process(Read(0, smoothL_)), er = tone_[1].Process(Read(1, smoothR_));
-            const double inL = l[i], inR = r[i];
+            const double dryL = l[i], dryR = r[i], inL = dryL * inGain_, inR = dryR * inGain_;
+            if (inGain_ < 1) inGain_ = std::min(1.0, inGain_ + fadeStep);
             double wl, wr;
             switch (type) {
             case 1: wl = inL + fb * er, wr = inR + fb * el; break;
@@ -97,25 +116,42 @@ public:
             buf_[0][pos_] = float(wl);
             buf_[1][pos_] = float(wr);
             pos_ = (pos_ + 1) % size;
-            l[i] = float(dry * inL + wet * el);
-            r[i] = float(dry * inR + wet * er);
+            if (written_ < size) ++written_;
+            l[i] = float(dry * dryL + wet * out * el);
+            r[i] = float(dry * dryR + wet * out * er);
         }
     }
 
 private:
+    static constexpr double kClearFadeSeconds = 0.015;
+
+    // O(1) (no multi-MB fill on the audio thread): samples older than the
+    // last Empty() read as silence.
+    void Empty() {
+        written_ = 0;
+        inGain_ = 1;
+        tone_[0].Reset();
+        tone_[1].Reset();
+    }
+    float At(int ch, size_t i) const {
+        const size_t size = buf_[ch].size();
+        return written_ >= size || (pos_ + size - 1 - i) % size < written_ ? buf_[ch][i] : 0.0f;
+    }
     double Read(int ch, double delay) const {
         const size_t size = buf_[ch].size();
         double rp = double(pos_) - delay;
         while (rp < 0) rp += double(size);
         const size_t i0 = size_t(rp) % size, i1 = (i0 + 1) % size;
         const double f = rp - std::floor(rp);
-        return buf_[ch][i0] * (1 - f) + buf_[ch][i1] * f;
+        return At(ch, i0) * (1 - f) + At(ch, i1) * f;
     }
 
     double sr_ = 44100;
     std::vector<float> buf_[2];
-    size_t pos_ = 0;
+    size_t pos_ = 0, written_ = 0;
     double smoothL_ = -1, smoothR_ = -1;
+    int fadeLen_ = 1, fadeOut_ = 0;
+    double inGain_ = 1;
     OnePole tone_[2];
 };
 

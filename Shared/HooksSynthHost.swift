@@ -29,6 +29,9 @@ final class HooksSynthHost: SynthHost {
     func savePatchFile(_ path: String) -> Bool { path.withCString { h.savePatchFile(h.ctx, $0) } != 0 }
     func libraryJSON() -> String { str(h.libraryJSON(h.ctx)) }
     func rescanLibrary() { h.rescanLibrary(h.ctx) }
+    func startLibraryScan() { h.startLibraryScan(h.ctx) }
+    var libraryRevision: Int { Int(h.libraryRevision(h.ctx)) }
+    var libraryScanning: Bool { h.libraryScanning(h.ctx) != 0 }
     func libraryNotice() -> String { str(h.libraryNotice(h.ctx)) }
     var libraryRoot: String { str(h.libraryRoot(h.ctx)) }
     func loadLibraryPatch(bank: Int, slot: Int) -> Bool { h.loadLibraryPatch(h.ctx, Int32(bank), Int32(slot)) != 0 }
@@ -38,6 +41,9 @@ final class HooksSynthHost: SynthHost {
     func slotPath(bank: Int, slot: Int) -> String { str(h.slotPath(h.ctx, Int32(bank), Int32(slot))) }
     func newBank(_ name: String) -> Int { Int(name.withCString { h.newBank(h.ctx, $0) }) }
     func movePatch(bank: Int, from: Int, to: Int) -> Bool { h.movePatch(h.ctx, Int32(bank), Int32(from), Int32(to)) != 0 }
+    func copyPatch(bank: Int, slot: Int, to: Int) -> Int { Int(h.copyPatch(h.ctx, Int32(bank), Int32(slot), Int32(to))) }
+    func deleteBank(_ bank: Int) -> Bool { h.deleteBank(h.ctx, Int32(bank)) != 0 }
+    func exportBank(_ bank: Int, to dir: String) -> String { str(dir.withCString { h.exportBank(h.ctx, Int32(bank), $0) }) }
     func importItems(_ paths: String) -> [String] {
         str(paths.withCString { h.importItems(h.ctx, $0) }).split(separator: "\n").map(String.init)
     }

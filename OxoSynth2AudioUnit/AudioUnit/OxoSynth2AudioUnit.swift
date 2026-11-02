@@ -5,9 +5,20 @@ import AudioToolbox
 /// Synth2Instance does the work; this class is the host-facing shell —
 /// stereo output bus, the 99-parameter tree (native Synth1 values, ids =
 /// Synth1 indices like the VST3), fullState = the same 'OXS2' chunk as the
-/// VST3 state, render block -> Synth2Render.
+/// VST3 state (+ the UI width mode), render block -> Synth2Render.
 public final class OxoSynth2AudioUnit: AUAudioUnit {
     static let stateKey = "OXS2"
+    /// The editor's UI width mode: per instance, in fullState beside the
+    /// chunk (iPad only, the VST3 has no such mode); the last choice seeds
+    /// new instances.
+    static let uiWidthModeKey = "OxoUIWidthMode"
+    private static let uiWidthModeDefault = "oxo.synth2.uiWidthMode"
+    private(set) var uiWidthMode = UserDefaults.standard.bool(forKey: uiWidthModeDefault)
+
+    func chooseUIWidthMode(_ on: Bool) {
+        uiWidthMode = on
+        UserDefaults.standard.set(on, forKey: Self.uiWidthModeDefault)
+    }
 
     let instance: UnsafeMutableRawPointer
     private var outputBus: AUAudioUnitBus!
@@ -117,9 +128,11 @@ public final class OxoSynth2AudioUnit: AUAudioUnit {
             var bytes = [UInt8](repeating: 0, count: Int(size))
             _ = Synth2EncodeState(instance, &bytes, size)
             state[Self.stateKey] = Data(bytes)
+            state[Self.uiWidthModeKey] = uiWidthMode
             return state
         }
         set {
+            if let mode = newValue?[Self.uiWidthModeKey] as? Bool { uiWidthMode = mode }
             guard let data = newValue?[Self.stateKey] as? Data else { return }
             let ok = data.withUnsafeBytes { raw -> Bool in
                 guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return false }

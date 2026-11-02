@@ -28,6 +28,12 @@ public protocol SynthHost: AnyObject {
     func libraryJSON() -> String
     /// Also extracts zips put into the library (then trashed).
     func rescanLibrary()
+    /// `rescanLibrary` on a worker thread; reading `libraryRevision`
+    /// adopts the finished scan (big libraries: the browser opens at once).
+    func startLibraryScan()
+    /// Bumps whenever the bank list changes, 0 = never scanned.
+    var libraryRevision: Int { get }
+    var libraryScanning: Bool { get }
     /// "X.zip imported and moved to Trash" since the last call, "" = none.
     func libraryNotice() -> String
     var libraryRoot: String { get }
@@ -38,6 +44,14 @@ public protocol SynthHost: AnyObject {
     func newBank(_ name: String) -> Int
     /// Browser drag and drop: slot `from` -> `to` in a bank (swap if taken).
     func movePatch(bank: Int, from: Int, to: Int) -> Bool
+    /// Browser drag onto a bank: a copy into its first free slot; returns
+    /// that slot, -1 = the bank is full, -2 = failed.
+    func copyPatch(bank: Int, slot: Int, to: Int) -> Int
+    /// Browser > Delete bank: its folder to the Trash (mac) / deleted (iPad).
+    func deleteBank(_ bank: Int) -> Bool
+    /// Browser > Export bank: copies the bank as a new folder into `dir`;
+    /// returns that folder, "" = failed.
+    func exportBank(_ bank: Int, to dir: String) -> String
     /// Copies into the library and rescans; newline-separated paths in,
     /// the new top-level folders out.
     func importItems(_ paths: String) -> [String]
@@ -96,9 +110,12 @@ private struct LibraryInfo: Decodable {
 }
 
 /// File dialogs the panel presents (NSOpenPanel / NSSavePanel on mac, the
-/// system file importer / exporter on iPad).
+/// system file importer / exporter on iPad). `importFolder`: the iPad's
+/// folder picker (the mac's Import… panel takes both, `importBanks`);
+/// `exportBank`: pick the folder that receives the bank (its id).
 enum FileAction: Equatable {
-    case importBanks, loadPatch, savePatch
+    case importBanks, importFolder, loadPatch, savePatch
+    case exportBank(String)
 }
 
 /// Editor state mirrored from the host by a 30 Hz poll (host automation,
@@ -116,6 +133,10 @@ final class SynthModel: ObservableObject {
     @Published private(set) var patchName: String
     @Published private(set) var banks: [PatchBankInfo] = []
     @Published private(set) var libraryRoot = ""
+    /// A background rescan is running (the browser says "loading…").
+    @Published private(set) var libraryLoading = false
+    /// `host.libraryRevision` of `banks`.
+    private var libraryRevision = 0
     /// Bank shown in the browser / LCD, and the loaded program slot.
     @Published var currentBank: Int?
     @Published var currentProgram: Int?
@@ -128,6 +149,9 @@ final class SynthModel: ObservableObject {
     /// Bumped by the bottom bar's write button while the write dialog is
     /// open: the dialog commits (same as its Write / Overwrite button).
     @Published var writeCommits = 0
+    /// Browser > Delete bank…: the bank (id) awaiting the in-browser
+    /// confirmation, nil = none.
+    @Published var bankToDelete: String?
     @Published var fileAction: FileAction?
     /// The in-panel Themes dialog (menu > Themes…).
     @Published var showThemes = false
@@ -147,6 +171,14 @@ final class SynthModel: ObservableObject {
     /// Asks the host for this editor width (the height follows the aspect);
     /// nil = the host owns no resize (iPad AUv3, snapshots): no logo menu.
     var requestEditorWidth: ((Double) -> Void)?
+    /// iPad: where the AU keeps this instance's UI mode (host session); nil
+    /// = no such mode (mac, snapshots): no toggle, the panel always fits.
+    var uiWidthModeStorage: (get: () -> Bool, set: (Bool) -> Void)? {
+        didSet { uiWidthMode = uiWidthModeStorage?.get() ?? false }
+    }
+    /// UI width mode: the width leads and the panel scrolls vertically
+    /// (false = height mode, the whole panel fits the view).
+    @Published private(set) var uiWidthMode = false
 
     /// Transient LCD message (last edited value, MIDI learn feedback).
     @Published private(set) var readout: String?
@@ -173,8 +205,13 @@ final class SynthModel: ObservableObject {
         // Tracked from the start, so entering learn mode never consumes a CC
         // that arrived before.
         ccToken = host.lastCC
-        loadLibrary()
-        syncProgram()
+        // Never a blocking scan here (big libraries): an editor reopen finds
+        // the list in place, a first open gets it from the background scan.
+        if host.libraryRevision > 0 {
+            loadLibrary()
+            syncProgram()
+        }
+        refreshLibrary()
         let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.poll() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -211,6 +248,12 @@ final class SynthModel: ObservableObject {
             ccToken = token
             if token != 0 { incomingCC(token & 0x7F) }
         }
+        if host.libraryRevision != libraryRevision { // a background scan landed
+            loadLibrary()
+            syncProgram()
+        }
+        let loading = host.libraryScanning
+        if loading != libraryLoading { libraryLoading = loading }
         let voiceStates = host.voiceStates
         if voiceStates != voices.states { voices.states = voiceStates }
         let now = Date()
@@ -222,6 +265,14 @@ final class SynthModel: ObservableObject {
             readoutHide = nil
             readout = nil
         }
+        // a session restore may bring the other mode
+        if let mode = uiWidthModeStorage?.get(), mode != uiWidthMode { uiWidthMode = mode }
+    }
+
+    func toggleUIWidthMode() {
+        guard let storage = uiWidthModeStorage else { return }
+        uiWidthMode.toggle()
+        storage.set(uiWidthMode)
     }
 
     // MARK: - theme (per instance)
@@ -347,6 +398,7 @@ final class SynthModel: ObservableObject {
     func loadLibrary(rescan: Bool = false) {
         let keep = currentBank.flatMap { $0 < banks.count ? banks[$0] : nil }
         if rescan { host.rescanLibrary() }
+        libraryRevision = host.libraryRevision // before the JSON: a scan adopted by this read is in it
         guard let data = host.libraryJSON().data(using: .utf8),
               let info = try? JSONDecoder().decode(LibraryInfo.self, from: data) else { return }
         banks = info.banks
@@ -372,9 +424,17 @@ final class SynthModel: ObservableObject {
         }
     }
 
+    /// Rescan in the background (Refresh, browser open, editor open): the
+    /// current list stays usable meanwhile, the poll swaps the new one in.
+    func refreshLibrary() {
+        host.startLibraryScan()
+        libraryLoading = host.libraryScanning
+    }
+
     /// Rescans on every open: banks edited in Finder show up by themselves.
+    /// Opens at once (big libraries take a while to scan).
     func openBrowser(write: Bool = false) {
-        loadLibrary(rescan: true)
+        refreshLibrary()
         showThemes = false
         writing = write
         showBrowser = true
@@ -383,12 +443,14 @@ final class SynthModel: ObservableObject {
     func closeBrowser() {
         showBrowser = false
         writing = false
+        bankToDelete = nil
     }
 
     /// LCD / browser selection from the host's program (a fresh instance
     /// starts on the library's first patch, sessions restore theirs).
     private func syncProgram() {
-        if let p = host.loadedProgram(), p.bank < banks.count {
+        // (no list yet: asking would scan synchronously; the scan's arrival re-syncs)
+        if libraryRevision > 0, let p = host.loadedProgram(), p.bank < banks.count {
             currentBank = p.bank
             currentProgram = p.slot
             loadedBankID = banks[p.bank].id
@@ -450,6 +512,10 @@ final class SynthModel: ObservableObject {
             return true
         }
         guard showBrowser else { return false }
+        if bankToDelete != nil { // the confirmation: Esc cancels, nothing else reaches the browser
+            if key == .escape { bankToDelete = nil }
+            return true
+        }
         if key == .escape {
             closeBrowser()
             return true
@@ -510,8 +576,16 @@ final class SynthModel: ObservableObject {
         return write(bank: b, slot: p, name: patchName)
     }
 
-    /// Browser right click > Delete: the slot's .sy1 to the Trash (mac), then
-    /// a rescan. The sound playing stays as it is.
+    /// What a delete does here: the mac has a Trash, the iPad deletes.
+    #if os(macOS)
+    static let deletedWord = "moved to Trash"
+    #else
+    static let deletedWord = "deleted"
+    #endif
+
+    /// Browser right click (mac) / long press (iPad) > Delete: the slot's
+    /// .sy1 to the Trash (mac) / deleted (iPad), then a rescan. The sound
+    /// playing stays as it is.
     func deleteSlot(bank: Int, slot: Int) {
         let path = host.slotPath(bank: bank, slot: slot)
         guard !path.isEmpty, bank < banks.count else { return }
@@ -523,11 +597,26 @@ final class SynthModel: ObservableObject {
             #else
             try FileManager.default.removeItem(at: url)
             #endif
-            flash("\(label) moved to Trash")
+            flash("\(label) \(Self.deletedWord)")
         } catch {
             flash("delete failed")
         }
         loadLibrary(rescan: true)
+    }
+
+    /// The confirmed Delete bank: the folder goes (EngineCore PatchManager::
+    /// DeleteBank), the browser shows the bank now at its place.
+    func deleteBank(id: String) {
+        bankToDelete = nil
+        guard let b = banks.firstIndex(where: { $0.id == id }), !banks[b].readOnly else { return }
+        let name = banks[b].name
+        let ok = host.deleteBank(b)
+        loadLibrary()
+        if loadedBankID == id { // the sound plays on, out of no bank (the host forgot it too)
+            currentProgram = nil
+            loadedBankID = nil
+        }
+        flash(ok ? "bank \(name) \(Self.deletedWord)" : "delete failed")
     }
 
     /// Browser drag and drop within the shown bank: move, or swap with an
@@ -537,6 +626,29 @@ final class SynthModel: ObservableObject {
         loadLibrary()
         syncProgram()
         flash(String(format: "moved %03d -> %03d", from + 1, to + 1))
+    }
+
+    /// Browser: a patch dropped on a bank = a copy in that bank's first free
+    /// slot (e.g. building a favorites bank); the browser stays on the bank
+    /// shown, the loaded program stays.
+    func copyPatch(bank: Int, slot: Int, to: Int) {
+        guard bank < banks.count, to < banks.count else { return }
+        let target = String(format: "%02d:%@", to, banks[to].name)
+        let s = host.copyPatch(bank: bank, slot: slot, to: to)
+        loadLibrary()
+        switch s {
+        case 0...: flash(String(format: "copied to %@ %03d", target, s + 1), seconds: 3)
+        case -1: flash("Bank is full (128 patches): cannot add a patch", seconds: 5)
+        default: flash("copy failed")
+        }
+    }
+
+    /// Browser > Export bank…, once the target folder is picked: a folder
+    /// named after the bank's, holding its patches, is created there.
+    func exportBank(id: String, to dir: URL) {
+        guard let b = banks.firstIndex(where: { $0.id == id }) else { return }
+        let made = SynthLibrary.withAccess([dir]) { host.exportBank(b, to: $0) }
+        flash(made.isEmpty ? "export failed" : "bank exported as \(URL(fileURLWithPath: made).lastPathComponent)", seconds: 4)
     }
 
     func newBank(_ name: String) {

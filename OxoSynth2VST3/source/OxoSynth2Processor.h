@@ -60,6 +60,7 @@ private:
     std::atomic<int32_t> volume_{s2::kVolumeParam.def}; // master volume, state chunk only (not the patch)
     std::atomic<bool> pending_{false};
     std::atomic<bool> panic_{false}; // menu > All notes off (controller message), done in process()
+    std::atomic<bool> clearDelay_{false}; // a patch load ("OxoPatchLoad", setState), done in process()
     std::mutex nameMutex_;
     std::string name_ = "Init";
     std::string color_ = "default";

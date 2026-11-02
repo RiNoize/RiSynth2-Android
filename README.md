@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/synth2_preview.png" width="600" alt="The Synth2 panel"></p>
+
 # Synth2
 
 A free, open-source recreation of **Synth1**, the classic freeware synthesizer by Daichi Laboratory ([website](https://daichilab.sakura.ne.jp/softsynth/index.html)).
@@ -89,7 +91,7 @@ make -C EngineCoreTests test
 | `EditorCore/` | Editor services shared by the VST3 and the AUv3 (C bridge to the UI, state, per-user files) |
 | `Shared/` | The SwiftUI panel (mac and iPad) |
 | `OxoSynth2VST3/` | VST3 plugin (+ the SDK's AUv2 wrapper), CMake |
-| `OxoSynth2.xcodeproj`, `OxoSynth2/`, `OxoSynth2AudioUnit/` | iPad app (bank library manager) + AUv3 extension |
+| `OxoSynth2.xcodeproj`, `OxoSynth2/`, `OxoSynth2AudioUnit/` | iPad app (an "open it in a host" screen) + AUv3 extension |
 | `EngineCoreTests/` | Engine unit tests |
 | `tools/s1ref/` | Black-box harness for the original Synth1 + the measurement / fitting scripts |
 | `tools/s2render/` | Renders the same test jobs through Synth2, for comparison |

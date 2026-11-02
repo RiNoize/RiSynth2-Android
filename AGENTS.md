@@ -101,12 +101,19 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   (themes, ThemeDialog, LogoMenu), `SynthWheel.swift` (wheel monitor,
   `WheelFeel`), `SynthTooltip.swift`, `SynthUpdateCheck.swift`,
   `Resources/` (bundled banks, see Patch library).
-- `OxoSynth2.xcodeproj` (synchronized folders): `OxoSynth2/` = iPad app
-  (library manager: Import banks, "Open in"), `OxoSynth2AudioUnit/` = AUv3
+- `OxoSynth2.xcodeproj` (synchronized folders): `OxoSynth2/` = iPad app,
+  ONLY a screen saying "open it in a host" + version (copied from Oxo
+  Sample's app minus the IAP): no engine, no library (the plugin's browser
+  manages it; an app-side import confused users), no app group, no "Open
+  in" document types; it keeps the imported `.sy1` UTI declaration
+  + `ITSAppUsesNonExemptEncryption` NO; app and appex each carry a
+  `PrivacyInfo.xcprivacy` (appex: UserDefaults CA92.1 — declare any new
+  required-reason API there);
+  compiles only its own folder. `OxoSynth2AudioUnit/` = AUv3
   appex (`AudioUnit/OxoSynth2AudioUnit.swift` AUAudioUnit shell,
   `AudioUnitViewController.swift` factory + UI, `DSP/Synth2Instance.hpp`
   engine + mailboxes + learn + SynthEditorCore, `DSP/Synth2Bridge.{h,mm}`
-  C API incl. the render loop), `Shared/` in both.
+  C API incl. the render loop) + `Shared/`.
 - `tools/au_harness/main.mm` — mac check of the AUv3 C bridge (command in
   the file): render, MIDI 1 + 2 (UMP), learn, state, library hooks.
 - `tools/ui_snapshot/` — `main.swift` renders the panel with a mock host to
@@ -127,6 +134,8 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   the tables' sources). `reference/renders/` + `reference/derived/`
   (download, README "Reference data") and `reference/presets/` are
   gitignored.
+- `docs/images/` — README pictures (`synth2_preview.png` = a copy of the
+  site's gallery_2, shown at 800 px via an HTML `<img width>`).
 - `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
   `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: hidden-param
   auwrapper + AudioUnitSDK deployment target.
@@ -261,11 +270,11 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   copy phase never deletes a removed patch).
 - A ZIP FOUND IN THE LIBRARY (any depth) on a rescan (load, browser open,
   Refresh) = an import: extracted next to itself, then moved to the Trash
-  (`Trash.hpp`; no Trash e.g. iOS → deleted); LCD shows (10 s) "X.zip
+  (`Trash.hpp`; iOS → deleted); LCD shows (10 s) "X.zip
   imported and moved to Trash" (`TakeNotice` → hook `libraryNotice`). A zip
   without .sy1 stays, ignored.
-- IMPORT (`ImportItems`, hook `importItems`, iPad app via
-  `OxoSynth2/LibraryImport.cpp`): COPIES into the root. Folders copied
+- IMPORT (`ImportItems`, hook `importItems`, the browser's Import…):
+  COPIES into the root. Folders copied
   (only .sy1), zips EXTRACTED into a folder of their name (one wrapping
   folder dropped, __MACOSX / dot files skipped, non-UTF-8 names cleaned),
   a Synth1 `zipbank/` folder merges into its parent, loose .sy1 →
@@ -278,10 +287,49 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   bank, else the first empty slot.
 - MOVE (browser drag and drop): renames every patch of the bank to its
   `NNN.sy1` in two phases (hidden temp names), an occupied target swaps.
-- Browser header: Import… / Open library folder (mac) / Refresh / Close;
-  rescans on every open. Right click on a bank / slot = Show in Finder
-  (mac). Rename / delete / share banks = Finder. iPad: system file picker,
-  no Finder actions.
+- COPY (drag a patch onto a BANK row, "+" cursor = `.copy` proposal):
+  `PatchManager::Copy` → byte copy into the bank's first free slot as
+  `NNN.sy1` (its own bank = a duplicate); hook `copyPatch` → slot, -1 =
+  full (LCD: "Bank is full (128 patches): cannot add a patch"), -2 =
+  refused. The browser stays on the source bank (favorites workflow).
+  Factory patches are draggable for copying only (no move / drop inside
+  the factory bank, never a copy into it).
+- DELETE (`PatchManager::DeleteBank`, hook `deleteBank`; patches: Swift
+  `deleteSlot`): mac moves to the Trash, iPad deletes (`Trash.hpp` returns
+  false on iOS: a container Trash nobody can empty). A bank = its folder,
+  except a folder that also holds sub-folders (other banks) or the root's
+  own bank: only its .sy1 files. Never the factory bank, never outside the
+  root; the loaded program is forgotten if its bank goes (the sound plays
+  on). Bank delete asks first (in-browser `DeleteBankDialog`, Esc cancels).
+- Browser header: Import… / Open library folder / Refresh / Close (mac);
+  iPad: Import folder… (picker on `[.folder]` ALONE: mixed with file types
+  iOS navigates into folders, no Open button) / Import files… (zip / .sy1,
+  multiple) / Refresh / Close. Rescans on every open. Bank / slot menu
+  (`libraryMenu`): mac right click = [Export bank…,] Show in Finder[,
+  Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
+  Delete bank…] (no delete on the factory bank). Rename banks = Finder
+  (mac only).
+- SCAN SPEED (big libraries; 150 banks x 128 = 19,200 .sy1 measured): a
+  scan used to open every .sy1 for its name (0.5 s warm, 1.5 s cold on an
+  M-series mac, worse on iPad). `PatchNameCache` (process-wide, path +
+  size + mtime) → only new / changed files are opened (rescan 60 ms);
+  `FolderEntries` lists each folder once and keeps the listing's file type
+  (no stat per is_directory). Browser open / Refresh / editor open =
+  `PatchManager::StartRescan` (worker thread, joined in the destructor;
+  zip expansion under a process-wide mutex) → hooks `startLibraryScan` /
+  `libraryRevision` (polled at 30 Hz, adopts the finished scan) /
+  `libraryScanning`. The browser opens at once: "Loading…" with no list
+  yet, else the previous list + "loading…" in the header until the new one
+  swaps in. A library change on the UI thread meanwhile (write, move,
+  delete, import, sync rescan: `generation_`) wins, the worker's list is
+  dropped. The editor never scans synchronously at open (`syncProgram`
+  waits for a list); mutations still rescan synchronously (fast with the
+  cache).
+- EXPORT BANK (`PatchManager::ExportBank`, hook `exportBank`, FileAction
+  `.exportBank(id)`): pick a target folder (mac NSOpenPanel folders only,
+  iPad picker on `[.folder]`); a folder named after the bank's (" 2" when
+  taken) is created there with the bank's .sy1 files, names kept (slots
+  stay), sub-banks left out. Any bank, the factory one too.
 
 ## Editor (behaviour contracts)
 
@@ -290,7 +338,12 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   the VST3 controller and the AUv3 instance); Swift side `HooksSynthHost`.
   A patch load = begin/perform/endEdit on all 99 params (host-visible) +
   `OxoPatchName` message (the processor keeps the name for the state
-  chunk); `patchSerial` tells the UI to refresh.
+  chunk); `patchSerial` tells the UI to refresh. Before its edits a load
+  calls `PatchLoading()` (VST3 message "OxoPatchLoad", AUv3 atomic; host
+  setState / fullState too) → `Synth::ClearDelay`: the delay's echoes fade
+  out (15 ms), the line empties (O(1) age check, no fill), its input fades
+  back in, so the switch's transient never rings in a long feedback.
+  Chorus untouched.
 - Panel = Synth1's layout and colours (khaki panel, dark title strips,
   black knobs, green button LEDs, red radio LEDs, wave icon grids, cyan
   displays; Osc / LFO / Wheel-MIDI left, Amp / Filter / Arp middle, Effect
@@ -337,15 +390,26 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   .sy1; changing it also becomes the per-user default for new instances
   (`themes.json` "current"); an instance without a session theme adopts
   that default.
-- LOGO MENU (mac only): click on the "Synth2" title = in-panel menu
-  (`LogoMenu`): UI size 75..200 % of 700 pt (= Synth1 at its 150 %; the
-  770 pt canvas is only the drawing grid), themes. Resize = C callback
+- LOGO MENU: click on the "Synth2" title = in-panel menu (`LogoMenu`): UI
+  size 75..200 % of 700 pt (= Synth1 at its 150 %; the 770 pt canvas is
+  only the drawing grid; shown only when `model.requestEditorWidth` is set
+  = mac, the iPad gets themes only), themes. Resize = C callback
   passed to `OxoSynth2EditorCreate` → `plugFrame->resizeView`. Window
   aspect-locked, width in NSUserDefaults `oxo.synth2.editorWidth`.
 - TOOLTIPS: only `.oxoTruncationTooltip` on cut patch / bank names in the
   browser (first 0.5 s, then instant while warm); no help tips, no
   `.help()`; hover via `onContinuousHover`.
-- iPad: same panel scaled to fit, centred. The AU parameter tree (99
+- iPad: same panel scaled to fit, centred (HEIGHT MODE). UI WIDTH MODE
+  (toggle left of the version box, `UIModeToggle`, lit arrow = the leading
+  side): the width leads minus two 40 pt invisible side strips
+  (`PanelScrollStrip`, 1:1 drag + flick, no rubber band; the panel itself
+  never scrolls, knobs own vertical drags), the panel scrolls vertically;
+  it falls back to the fit layout when that fits anyway and while the
+  browser / write, Themes or Update dialog is open (scroll kept). Mode per
+  instance = AU fullState key `OxoUIWidthMode` beside the chunk (no chunk
+  change, the VST3 has no mode), last choice seeds new instances
+  (UserDefaults `oxo.synth2.uiWidthMode`); `SynthModel.uiWidthModeStorage`
+  nil = no toggle (mac). Snapshot modes `ipad` / `ipad-wide`. The AU parameter tree (99
   params, address = index, NATIVE values) is the host truth; observer →
   `Synth2Instance::SetFromHost` (atomic + dirty bit, applied at the next
   render); UI edits → hooks → instance → AUParameter.setValue (.touch /
