@@ -2,7 +2,9 @@
 
 #include "../EngineCore/PatchLibrary.hpp"
 
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 
 using namespace oxo::s2;
 namespace fs = std::filesystem;
@@ -429,4 +431,83 @@ OXO_TEST(PatchManagerMoveRenamesAndSwaps) {
     int files = 0;
     for ([[maybe_unused]] const auto &e : fs::directory_iterator(root / "Bank")) ++files;
     OXO_EXPECT_EQ(files, 2); // no temp left behind
+}
+
+// Rescans read a patch name only when its file changed (name cache keyed by
+// path + size + mtime): an edited file shows its new name.
+OXO_TEST(RescanRereadsChangedPatchNames) {
+    const fs::path base = FreshDir("oxo_s2_namecache_test");
+    const fs::path root = base / "Synth2";
+    fs::create_directories(root / "Bank");
+    WriteFile(root / "Bank" / "001.sy1", "First\nver=112\n");
+    WriteFile(root / "Bank" / "002.sy1", "Second\nver=112\n");
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    const auto slot = [&](int s) { return m.Library().Banks()[0].slots[size_t(s)].name; };
+    OXO_EXPECT_EQ(slot(0), std::string("First"));
+    WriteFile(root / "Bank" / "001.sy1", "Fresh\nver=112\n"); // same size
+    fs::last_write_time(root / "Bank" / "001.sy1", fs::last_write_time(root / "Bank" / "001.sy1") + std::chrono::seconds(2));
+    WriteFile(root / "Bank" / "003.sy1", "Third\nver=112\n");
+    m.Rescan();
+    OXO_EXPECT_EQ(slot(0), std::string("Fresh"));
+    OXO_EXPECT_EQ(slot(1), std::string("Second"));
+    OXO_EXPECT_EQ(slot(2), std::string("Third"));
+    fs::remove_all(base);
+}
+
+namespace {
+// Polls like the editor (UI thread) until the background scan is adopted.
+bool WaitScan(PatchManager &m) {
+    for (int i = 0; i < 2000 && m.Scanning(); ++i) {
+        m.PollRescan();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    m.PollRescan();
+    return !m.Scanning();
+}
+} // namespace
+
+// The browser opens at once: the rescan runs on a worker thread, the UI
+// thread adopts its list (revision bump) and the zip notices.
+OXO_TEST(BackgroundRescanIsAdoptedByPoll) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_test");
+    const fs::path root = base / "Synth2", src = base / "src";
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    const int before = m.Revision();
+    fs::create_directories(root / "Added");
+    WriteFile(root / "Added" / "001.sy1", "Added\nver=112\n");
+    fs::create_directories(src / "Z");
+    WriteFile(src / "Z" / "001.sy1", "Zipped\nver=112\n");
+    const std::string cmd = "cd '" + src.string() + "' && zip -q -r '" + (root / "Dropped.zip").string() + "' Z";
+    OXO_EXPECT(std::system(cmd.c_str()) == 0);
+    m.StartRescan();
+    OXO_EXPECT(m.Scanning());
+    OXO_EXPECT(WaitScan(m));
+    OXO_EXPECT(m.Revision() > before);
+    OXO_EXPECT(m.Json().find("\"Added\"") != std::string::npos);
+    OXO_EXPECT(m.Json().find("\"Dropped\"") != std::string::npos);
+    OXO_EXPECT_EQ(m.TakeNotice(), std::string("Dropped.zip imported (zip removed)"));
+    fs::remove_all(base);
+}
+
+// A library change made meanwhile on the UI thread (here a write) wins: the
+// worker's older list is dropped, never adopted over it.
+OXO_TEST(BackgroundRescanNeverOverwritesNewerEdits) {
+    const fs::path base = FreshDir("oxo_s2_bgscan_write_test");
+    const fs::path root = base / "Synth2";
+    PatchManager m;
+    m.Configure(root);
+    m.Rescan();
+    for (int round = 0; round < 20; ++round) {
+        m.StartRescan();
+        Sy1Patch p;
+        p.name = "Write " + std::to_string(round);
+        OXO_EXPECT(m.Write(0, 0, p));
+        OXO_EXPECT(WaitScan(m));
+        OXO_EXPECT_EQ(m.Library().Banks()[0].slots[0].name, p.name);
+    }
+    fs::remove_all(base);
 }

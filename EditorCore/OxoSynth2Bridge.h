@@ -32,6 +32,11 @@ typedef struct OxoSynth2Hooks {
     // Library (EngineCore/PatchLibrary.hpp): one folder, banks of 128 slots.
     const char *(*libraryJSON)(void *ctx);                     // PatchManager::Json
     void (*rescanLibrary)(void *ctx); // also extracts + trashes zips put into the library
+    // The same rescan on a worker thread (browser open, Refresh); the UI
+    // keeps polling libraryRevision, which adopts the finished scan.
+    void (*startLibraryScan)(void *ctx);
+    int32_t (*libraryRevision)(void *ctx); // bumps whenever the list changes, 0 = never scanned
+    int32_t (*libraryScanning)(void *ctx); // a background scan is running
     const char *(*libraryNotice)(void *ctx); // "X.zip imported and moved to Trash", "" = none; clears
     const char *(*libraryRoot)(void *ctx);
     int32_t (*loadLibraryPatch)(void *ctx, int32_t bank, int32_t slot);

@@ -28,6 +28,12 @@ public protocol SynthHost: AnyObject {
     func libraryJSON() -> String
     /// Also extracts zips put into the library (then trashed).
     func rescanLibrary()
+    /// `rescanLibrary` on a worker thread; reading `libraryRevision`
+    /// adopts the finished scan (big libraries: the browser opens at once).
+    func startLibraryScan()
+    /// Bumps whenever the bank list changes, 0 = never scanned.
+    var libraryRevision: Int { get }
+    var libraryScanning: Bool { get }
     /// "X.zip imported and moved to Trash" since the last call, "" = none.
     func libraryNotice() -> String
     var libraryRoot: String { get }
@@ -124,6 +130,10 @@ final class SynthModel: ObservableObject {
     @Published private(set) var patchName: String
     @Published private(set) var banks: [PatchBankInfo] = []
     @Published private(set) var libraryRoot = ""
+    /// A background rescan is running (the browser says "loading…").
+    @Published private(set) var libraryLoading = false
+    /// `host.libraryRevision` of `banks`.
+    private var libraryRevision = 0
     /// Bank shown in the browser / LCD, and the loaded program slot.
     @Published var currentBank: Int?
     @Published var currentProgram: Int?
@@ -192,8 +202,13 @@ final class SynthModel: ObservableObject {
         // Tracked from the start, so entering learn mode never consumes a CC
         // that arrived before.
         ccToken = host.lastCC
-        loadLibrary()
-        syncProgram()
+        // Never a blocking scan here (big libraries): an editor reopen finds
+        // the list in place, a first open gets it from the background scan.
+        if host.libraryRevision > 0 {
+            loadLibrary()
+            syncProgram()
+        }
+        refreshLibrary()
         let t = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in self?.poll() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -230,6 +245,12 @@ final class SynthModel: ObservableObject {
             ccToken = token
             if token != 0 { incomingCC(token & 0x7F) }
         }
+        if host.libraryRevision != libraryRevision { // a background scan landed
+            loadLibrary()
+            syncProgram()
+        }
+        let loading = host.libraryScanning
+        if loading != libraryLoading { libraryLoading = loading }
         let voiceStates = host.voiceStates
         if voiceStates != voices.states { voices.states = voiceStates }
         let now = Date()
@@ -374,6 +395,7 @@ final class SynthModel: ObservableObject {
     func loadLibrary(rescan: Bool = false) {
         let keep = currentBank.flatMap { $0 < banks.count ? banks[$0] : nil }
         if rescan { host.rescanLibrary() }
+        libraryRevision = host.libraryRevision // before the JSON: a scan adopted by this read is in it
         guard let data = host.libraryJSON().data(using: .utf8),
               let info = try? JSONDecoder().decode(LibraryInfo.self, from: data) else { return }
         banks = info.banks
@@ -399,9 +421,17 @@ final class SynthModel: ObservableObject {
         }
     }
 
+    /// Rescan in the background (Refresh, browser open, editor open): the
+    /// current list stays usable meanwhile, the poll swaps the new one in.
+    func refreshLibrary() {
+        host.startLibraryScan()
+        libraryLoading = host.libraryScanning
+    }
+
     /// Rescans on every open: banks edited in Finder show up by themselves.
+    /// Opens at once (big libraries take a while to scan).
     func openBrowser(write: Bool = false) {
-        loadLibrary(rescan: true)
+        refreshLibrary()
         showThemes = false
         writing = write
         showBrowser = true
@@ -416,7 +446,8 @@ final class SynthModel: ObservableObject {
     /// LCD / browser selection from the host's program (a fresh instance
     /// starts on the library's first patch, sessions restore theirs).
     private func syncProgram() {
-        if let p = host.loadedProgram(), p.bank < banks.count {
+        // (no list yet: asking would scan synchronously; the scan's arrival re-syncs)
+        if libraryRevision > 0, let p = host.loadedProgram(), p.bank < banks.count {
             currentBank = p.bank
             currentProgram = p.slot
             loadedBankID = banks[p.bank].id

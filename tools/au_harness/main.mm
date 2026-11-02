@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <vector>
 int main() {
     int fails = 0;
@@ -123,6 +124,15 @@ int main() {
         std::system("rm -rf /tmp/oxo_s2_hx && mkdir -p /tmp/oxo_s2_hx");
         expect(std::strcmp(h.exportBank(h.ctx, 0, "/tmp/oxo_s2_hx"), "/tmp/oxo_s2_hx/Imported") == 0 &&
                    std::system("test -f /tmp/oxo_s2_hx/Imported/001.sy1") == 0, "export bank");
+    }
+    {   // background rescan (browser open): a bank added in Finder arrives through the revision poll
+        std::system("mkdir -p '/tmp/oxo_s2_ios_harness_lib/Finder Bank' && cp /tmp/oxo_s2_harness_import.sy1 "
+                    "'/tmp/oxo_s2_ios_harness_lib/Finder Bank/001.sy1'");
+        const int32_t rev = h.libraryRevision(h.ctx);
+        h.startLibraryScan(h.ctx);
+        for (int i = 0; i < 2000 && (h.libraryScanning(h.ctx) || h.libraryRevision(h.ctx) == rev); ++i) usleep(1000);
+        expect(h.libraryRevision(h.ctx) != rev && !h.libraryScanning(h.ctx) &&
+                   std::strstr(h.libraryJSON(h.ctx), "\"Finder Bank\"") != nullptr, "background rescan adopted");
     }
     // Initialize patch = Synth2's INIT; the double-click default follows it
     int32_t lo = 0, hi = 0, def = 0;

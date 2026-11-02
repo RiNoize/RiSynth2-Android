@@ -29,6 +29,9 @@ final class HooksSynthHost: SynthHost {
     func savePatchFile(_ path: String) -> Bool { path.withCString { h.savePatchFile(h.ctx, $0) } != 0 }
     func libraryJSON() -> String { str(h.libraryJSON(h.ctx)) }
     func rescanLibrary() { h.rescanLibrary(h.ctx) }
+    func startLibraryScan() { h.startLibraryScan(h.ctx) }
+    var libraryRevision: Int { Int(h.libraryRevision(h.ctx)) }
+    var libraryScanning: Bool { h.libraryScanning(h.ctx) != 0 }
     func libraryNotice() -> String { str(h.libraryNotice(h.ctx)) }
     var libraryRoot: String { str(h.libraryRoot(h.ctx)) }
     func loadLibraryPatch(bank: Int, slot: Int) -> Bool { h.loadLibraryPatch(h.ctx, Int32(bank), Int32(slot)) != 0 }

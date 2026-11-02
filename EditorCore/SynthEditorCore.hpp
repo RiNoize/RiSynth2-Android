@@ -186,6 +186,12 @@ public:
             return C(c)->json_.c_str();
         };
         h.rescanLibrary = [](void *c) { C(c)->library_.Rescan(); };
+        h.startLibraryScan = [](void *c) { C(c)->library_.StartRescan(); };
+        h.libraryRevision = [](void *c) {
+            C(c)->library_.PollRescan();
+            return int32_t(C(c)->library_.Revision());
+        };
+        h.libraryScanning = [](void *c) { return int32_t(C(c)->library_.Scanning()); };
         h.libraryNotice = [](void *c) { return C(c)->Keep(C(c)->library_.TakeNotice()); };
         h.libraryRoot = [](void *c) { return C(c)->Keep(C(c)->library_.Root().string()); };
         h.loadLibraryPatch = [](void *c, int32_t b, int32_t s) { return int32_t(C(c)->LoadLibraryPatch(b, s)); };

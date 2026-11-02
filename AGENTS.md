@@ -300,6 +300,22 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder
   (mac only).
+- SCAN SPEED (big libraries; 150 banks x 128 = 19,200 .sy1 measured): a
+  scan used to open every .sy1 for its name (0.5 s warm, 1.5 s cold on an
+  M-series mac, worse on iPad). `PatchNameCache` (process-wide, path +
+  size + mtime) → only new / changed files are opened (rescan 60 ms);
+  `FolderEntries` lists each folder once and keeps the listing's file type
+  (no stat per is_directory). Browser open / Refresh / editor open =
+  `PatchManager::StartRescan` (worker thread, joined in the destructor;
+  zip expansion under a process-wide mutex) → hooks `startLibraryScan` /
+  `libraryRevision` (polled at 30 Hz, adopts the finished scan) /
+  `libraryScanning`. The browser opens at once: "Loading…" with no list
+  yet, else the previous list + "loading…" in the header until the new one
+  swaps in. A library change on the UI thread meanwhile (write, move,
+  delete, import, sync rescan: `generation_`) wins, the worker's list is
+  dropped. The editor never scans synchronously at open (`syncProgram`
+  waits for a list); mutations still rescan synchronously (fast with the
+  cache).
 - EXPORT BANK (`PatchManager::ExportBank`, hook `exportBank`, FileAction
   `.exportBank(id)`): pick a target folder (mac NSOpenPanel folders only,
   iPad picker on `[.folder]`); a folder named after the bank's (" 2" when

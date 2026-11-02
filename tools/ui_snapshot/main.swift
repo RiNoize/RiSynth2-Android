@@ -1,6 +1,6 @@
 // Renders the editor with a mock host to PNG (layout eye-check without a DAW).
 //   swiftc Shared/*.swift tools/ui_snapshot/main.swift -o build/ui/snap
-//   ./build/ui/snap out.png [browser|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank]
+//   ./build/ui/snap out.png [browser|browser-loading|loading|write|learn|themes|logo|logo-ipad|ipad|ipad-wide|effect|update|delete-bank]
 import AppKit
 import SwiftUI
 
@@ -39,6 +39,9 @@ final class MockHost: SynthHost {
             + #"{"name":"User","source":"a","slots":"# + slots(["My Lead", "", "Pad"]) + "}]}"
     }
     func rescanLibrary() {}
+    func startLibraryScan() {}
+    var libraryRevision = 1
+    var libraryScanning = false
     func libraryNotice() -> String { "" }
     var libraryRoot: String { "/tmp" }
     func loadLibraryPatch(bank: Int, slot: Int) -> Bool { true }
@@ -65,10 +68,17 @@ final class MockHost: SynthHost {
 }
 
 let args = CommandLine.arguments
-let model = SynthModel(host: MockHost())
+let mock = MockHost()
+// loading: first browser open, no list yet; browser-loading: a rescan over a shown list
+let mode = args.count > 2 ? args[2] : ""
+if mode == "loading" { mock.libraryRevision = 0 }
+mock.libraryScanning = mode == "loading" || mode == "browser-loading"
+let model = SynthModel(host: mock)
 if args.count > 2 {
-    model.loadLibrary()
-    if args[2] == "themes" {
+    if mode != "loading" { model.loadLibrary() }
+    if mode == "loading" {
+        model.openBrowser()
+    } else if args[2] == "themes" {
     } else if args[2] == "logo" || args[2] == "logo-ipad" {
         // logo-ipad: no resize callback (AUv3) = themes only
         if args[2] == "logo" { model.requestEditorWidth = { _ in } }

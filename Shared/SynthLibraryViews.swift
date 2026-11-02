@@ -237,6 +237,9 @@ struct PatchBrowserView: View {
         HStack(spacing: 6) {
             Text(model.writing ? "Write patch" : "Banks")
                 .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.headerText)
+            if model.libraryLoading && !model.banks.isEmpty { // the list shown may still change
+                Text("loading…").font(.system(size: 11)).foregroundColor(theme.headerText.opacity(0.6))
+            }
             Spacer(minLength: 6)
             if naming {
                 field("new bank name", $newBankName, width: 180) { createBank() }
@@ -256,7 +259,7 @@ struct PatchBrowserView: View {
                 button("Import folder…", width: 96) { model.fileAction = .importFolder }
                 button("Import files…", width: 90) { model.fileAction = .importBanks }
                 #endif
-                button("Refresh") { model.loadLibrary(rescan: true) }
+                button("Refresh") { model.refreshLibrary() }
                 PanelButton(title: "Close", width: 60, height: 20, icon: "xmark") { model.closeBrowser() }
             }
         }
@@ -298,7 +301,8 @@ struct PatchBrowserView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(model.banks.indices, id: \.self) { b in bankRow(b) }
                     if model.banks.isEmpty {
-                        Text("No banks. Import… copies bank folders, zip banks or .sy1 patches into the library.")
+                        Text(model.libraryLoading ? "Loading…"
+                             : "No banks. Import… copies bank folders, zip banks or .sy1 patches into the library.")
                             .font(.system(size: 10)).foregroundColor(Theme.lcdText.opacity(0.7)).padding(8)
                     }
                 }
@@ -309,6 +313,7 @@ struct PatchBrowserView: View {
             .onChange(of: model.currentBank) { _, b in if let b { proxy.scrollTo(b) } }
             .onAppear { if let b = model.currentBank { proxy.scrollTo(b) } }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading) // also with no rows (loading)
         .background(theme.lcdBottom)
     }
 
@@ -356,6 +361,7 @@ struct PatchBrowserView: View {
             .onChange(of: [model.currentBank, model.currentProgram]) { _, _ in scrollToLoaded(proxy) }
             .onAppear { scrollToLoaded(proxy) }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.lcdBottom)
     }
 
