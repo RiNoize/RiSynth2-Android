@@ -511,3 +511,44 @@ OXO_TEST(BackgroundRescanNeverOverwritesNewerEdits) {
     }
     fs::remove_all(base);
 }
+
+// Browser drag of a patch onto a bank: a byte copy into the first free slot
+// (NNN.sy1), the source untouched; a full or read-only bank refuses.
+OXO_TEST(CopyPatchFillsFirstFreeSlot) {
+    const fs::path base = FreshDir("oxo_s2_copy_test");
+    const fs::path root = base / "Synth2", factory = base / "Factory";
+    fs::create_directories(root / "Src");
+    fs::create_directories(root / "Fav");
+    fs::create_directories(root / "Full");
+    fs::create_directories(factory);
+    WriteFile(factory / "001.sy1", "Factory\nver=112\n");
+    WriteFile(root / "Src" / "007_Lead.sy1", "Lead\r\nver=112\n0,2\n");
+    WriteFile(root / "Fav" / "001.sy1", "One\nver=112\n");
+    WriteFile(root / "Fav" / "003.sy1", "Three\nver=112\n");
+    for (int s = 0; s < kBankSlots; ++s) WriteFile(root / "Full" / SlotFileName(s), "X\nver=112\n");
+    PatchManager m;
+    m.Configure(root, factory);
+    m.Rescan();
+    const auto bank = [&](const char *name) {
+        for (size_t b = 0; b < m.Library().Banks().size(); ++b)
+            if (m.Library().Banks()[b].name == name) return int(b);
+        return -1;
+    };
+    const int src = bank("Src"), fav = bank("Fav"), full = bank("Full"), fac = bank(kFactoryBankName);
+    const int rev = m.Revision();
+    OXO_EXPECT_EQ(m.Copy(src, 6, fav), 1); // slot 002
+    OXO_EXPECT(m.Revision() > rev);
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[1].name, std::string("Lead"));
+    std::string a, b;
+    OXO_EXPECT(ReadTextFile(root / "Src" / "007_Lead.sy1", a) && ReadTextFile(root / "Fav" / "002.sy1", b) && a == b);
+    OXO_EXPECT_EQ(m.Copy(fac, 0, fav), 3);  // from the factory bank: allowed (slot 004)
+    OXO_EXPECT_EQ(m.Copy(src, 6, src), 0);  // its own bank: a duplicate
+    OXO_EXPECT_EQ(m.Copy(src, 6, full), -1); // full
+    OXO_EXPECT_EQ(m.Copy(src, 6, fac), -2);  // read-only
+    OXO_EXPECT_EQ(m.Copy(src, 5, fav), -2);  // empty source
+    m.Rescan(); // the files say the same
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(fav)].slots[3].name, std::string("Factory"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(src)].slots[0].name, std::string("Lead"));
+    OXO_EXPECT_EQ(m.Library().Banks()[size_t(src)].slots[6].name, std::string("Lead"));
+    fs::remove_all(base);
+}

@@ -44,6 +44,8 @@ typedef struct OxoSynth2Hooks {
     const char *(*slotPath)(void *ctx, int32_t bank, int32_t slot); // .sy1 file, "" = empty
     int32_t (*newBank)(void *ctx, const char *name);           // -> bank index, -1 = failed
     int32_t (*movePatch)(void *ctx, int32_t bank, int32_t from, int32_t to); // drag and drop: move / swap (renames files)
+    // Drag onto a bank: copy into its first free slot -> the slot, -1 = full, -2 = failed.
+    int32_t (*copyPatch)(void *ctx, int32_t bank, int32_t slot, int32_t toBank);
     int32_t (*deleteBank)(void *ctx, int32_t bank); // folder to the Trash (mac) / deleted (iPad); not the factory bank
     // Copies a bank as a new folder into `dir` -> that folder, "" = failed.
     const char *(*exportBank)(void *ctx, int32_t bank, const char *dir);

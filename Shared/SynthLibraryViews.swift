@@ -77,12 +77,12 @@ struct BottomBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .onTapGesture { toggleBrowser() }
-                .place(10, 6, 352, 26)
+                .place(10, 6, 328, 26)
             HStack(spacing: 4) {
-                PanelButton(title: "◀", width: 24, height: 20) { model.step(-1) }
-                PanelButton(title: "▶", width: 24, height: 20) { model.step(1) }
+                PanelButton(title: "◀", width: 36, height: 20) { model.step(-1) }
+                PanelButton(title: "▶", width: 36, height: 20) { model.step(1) }
             }
-            .place(372, 9, 52, 20)
+            .place(348, 9, 76, 20)
             Text(model.readout ?? bankLine)
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundColor(model.readout == nil ? Theme.lcdText.opacity(0.85) : theme.displayText)
@@ -192,6 +192,8 @@ struct PatchBrowserView: View {
     @State private var lastClick: (bank: Int, slot: Int, time: Date)?
     /// Slot under a drag (drop highlight).
     @State private var dropTarget: Int?
+    /// Bank row under a drag (copy highlight).
+    @State private var dropBank: Int?
     private static let dragPrefix = SlotDrop.prefix
 
     private var bank: PatchBankInfo? {
@@ -331,9 +333,14 @@ struct PatchBrowserView: View {
         .foregroundColor(selected ? theme.lcdBottom : Theme.lcdText)
         .padding(.horizontal, 6).padding(.vertical, 3)
         .background(selected ? theme.displayText : Color.clear)
+        .overlay(Rectangle().strokeBorder(theme.displayText, lineWidth: dropBank == b ? 1.5 : 0))
         .opacity(locked ? 0.35 : 1)
         .contentShape(Rectangle())
         .onTapGesture { if !locked { model.currentBank = b } }
+        // a patch dragged onto a bank: copied into its first free slot
+        .onDrop(of: SlotDrop.types, delegate: BankDrop(bank: b, enabled: !info.readOnly && !model.writing, target: $dropBank) {
+            model.copyPatch(bank: $0, slot: $1, to: b)
+        })
         .libraryMenu(enabled: !locked, export: { model.fileAction = .exportBank(info.id) }, deleteTitle: "Delete bank…",
                      delete: info.readOnly ? nil : { model.bankToDelete = info.id }) {
             info.source
@@ -400,10 +407,11 @@ struct PatchBrowserView: View {
             .libraryMenu(enabled: !patch.isEmpty, delete: readOnly ? nil : { model.deleteSlot(bank: b, slot: s) }) {
                 model.host.slotPath(bank: b, slot: s)
             }
-            // drag a patch onto another slot: move there (swap if taken)
-            .slotDraggable(patch.isEmpty || readOnly ? nil : Self.dragPrefix + "\(b):\(s)",
+            // drag a patch onto another slot: move there (swap if taken); onto
+            // a bank: copy (factory patches can only be copied)
+            .slotDraggable(patch.isEmpty ? nil : Self.dragPrefix + "\(b):\(s)",
                            label: String(format: "%03d:", s + 1) + patch, fill: theme.display)
-            .onDrop(of: [.plainText, .utf8PlainText, .text], delegate: SlotDrop(bank: b, slot: s, target: $dropTarget) { from in
+            .onDrop(of: SlotDrop.types, delegate: SlotDrop(bank: b, slot: s, enabled: !readOnly, target: $dropTarget) { from in
                 model.movePatch(bank: b, from: from, to: s)
             })
     }
@@ -441,29 +449,58 @@ struct PatchBrowserView: View {
     }
 }
 
-/// Drop on a browser slot: proposes a MOVE (no "+" copy badge on the
-/// cursor), highlights the slot, reads the "synth2-slot:bank:slot" payload.
+/// Drop on a browser slot: proposes a MOVE within the bank (no "+" copy
+/// badge on the cursor), highlights the slot. Never in the read-only
+/// factory bank.
 private struct SlotDrop: DropDelegate {
     static let prefix = "synth2-slot:"
-    let bank: Int, slot: Int
+    static let types: [UTType] = [.plainText, .utf8PlainText, .text]
+    let bank: Int, slot: Int, enabled: Bool
     @Binding var target: Int?
     let move: (Int) -> Void
 
+    func validateDrop(info: DropInfo) -> Bool { enabled }
     func dropEntered(info: DropInfo) { target = slot }
     func dropExited(info: DropInfo) { if target == slot { target = nil } }
     func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
 
     func performDrop(info: DropInfo) -> Bool {
         target = nil
-        guard let provider = info.itemProviders(for: [.plainText, .utf8PlainText, .text]).first else { return false }
         let (b, s) = (bank, slot)
+        return Self.read(info) { from in
+            if from.bank == b && from.slot != s { move(from.slot) }
+        }
+    }
+
+    /// The dragged slot ("synth2-slot:bank:slot" payload), on the main thread.
+    static func read(_ info: DropInfo, _ then: @escaping ((bank: Int, slot: Int)) -> Void) -> Bool {
+        guard let provider = info.itemProviders(for: types).first else { return false }
         _ = provider.loadObject(ofClass: NSString.self) { object, _ in
-            guard let item = object as? String, item.hasPrefix(Self.prefix) else { return }
-            let parts = item.dropFirst(Self.prefix.count).split(separator: ":").compactMap { Int($0) }
-            guard parts.count == 2, parts[0] == b, parts[1] != s else { return }
-            DispatchQueue.main.async { move(parts[1]) }
+            guard let item = object as? String, item.hasPrefix(prefix) else { return }
+            let parts = item.dropFirst(prefix.count).split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2 else { return }
+            DispatchQueue.main.async { then((parts[0], parts[1])) }
         }
         return true
+    }
+}
+
+/// Drop on a bank row: proposes a COPY ("+" on the cursor) into the bank's
+/// first free slot; the browser stays on the bank shown. Not on the
+/// read-only factory bank.
+private struct BankDrop: DropDelegate {
+    let bank: Int, enabled: Bool
+    @Binding var target: Int?
+    let copy: (_ bank: Int, _ slot: Int) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool { enabled }
+    func dropEntered(info: DropInfo) { target = bank }
+    func dropExited(info: DropInfo) { if target == bank { target = nil } }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .copy) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        target = nil
+        return SlotDrop.read(info) { from in copy(from.bank, from.slot) }
     }
 }
 

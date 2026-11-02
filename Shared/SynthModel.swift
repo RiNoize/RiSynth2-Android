@@ -44,6 +44,9 @@ public protocol SynthHost: AnyObject {
     func newBank(_ name: String) -> Int
     /// Browser drag and drop: slot `from` -> `to` in a bank (swap if taken).
     func movePatch(bank: Int, from: Int, to: Int) -> Bool
+    /// Browser drag onto a bank: a copy into its first free slot; returns
+    /// that slot, -1 = the bank is full, -2 = failed.
+    func copyPatch(bank: Int, slot: Int, to: Int) -> Int
     /// Browser > Delete bank: its folder to the Trash (mac) / deleted (iPad).
     func deleteBank(_ bank: Int) -> Bool
     /// Browser > Export bank: copies the bank as a new folder into `dir`;
@@ -623,6 +626,21 @@ final class SynthModel: ObservableObject {
         loadLibrary()
         syncProgram()
         flash(String(format: "moved %03d -> %03d", from + 1, to + 1))
+    }
+
+    /// Browser: a patch dropped on a bank = a copy in that bank's first free
+    /// slot (e.g. building a favorites bank); the browser stays on the bank
+    /// shown, the loaded program stays.
+    func copyPatch(bank: Int, slot: Int, to: Int) {
+        guard bank < banks.count, to < banks.count else { return }
+        let target = String(format: "%02d:%@", to, banks[to].name)
+        let s = host.copyPatch(bank: bank, slot: slot, to: to)
+        loadLibrary()
+        switch s {
+        case 0...: flash(String(format: "copied to %@ %03d", target, s + 1), seconds: 3)
+        case -1: flash("Bank is full (128 patches): cannot add a patch", seconds: 5)
+        default: flash("copy failed")
+        }
     }
 
     /// Browser > Export bank…, once the target folder is picked: a folder

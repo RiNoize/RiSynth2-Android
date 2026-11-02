@@ -285,6 +285,13 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   bank, else the first empty slot.
 - MOVE (browser drag and drop): renames every patch of the bank to its
   `NNN.sy1` in two phases (hidden temp names), an occupied target swaps.
+- COPY (drag a patch onto a BANK row, "+" cursor = `.copy` proposal):
+  `PatchManager::Copy` → byte copy into the bank's first free slot as
+  `NNN.sy1` (its own bank = a duplicate); hook `copyPatch` → slot, -1 =
+  full (LCD: "Bank is full (128 patches): cannot add a patch"), -2 =
+  refused. The browser stays on the source bank (favorites workflow).
+  Factory patches are draggable for copying only (no move / drop inside
+  the factory bank, never a copy into it).
 - DELETE (`PatchManager::DeleteBank`, hook `deleteBank`; patches: Swift
   `deleteSlot`): mac moves to the Trash, iPad deletes (`Trash.hpp` returns
   false on iOS: a container Trash nobody can empty). A bank = its folder,

@@ -201,6 +201,7 @@ public:
         h.slotPath = [](void *c, int32_t b, int32_t s) { return C(c)->Keep(C(c)->library_.SlotFile(b, s)); };
         h.newBank = [](void *c, const char *n) { return int32_t(C(c)->library_.NewBank(n ? n : "")); };
         h.movePatch = [](void *c, int32_t b, int32_t from, int32_t to) { return int32_t(C(c)->MovePatch(b, from, to)); };
+        h.copyPatch = [](void *c, int32_t b, int32_t s, int32_t to) { return int32_t(C(c)->library_.Copy(b, s, to)); };
         h.deleteBank = [](void *c, int32_t b) { return int32_t(C(c)->DeleteBank(b)); };
         h.exportBank = [](void *c, int32_t b, const char *d) {
             return C(c)->Keep(d ? C(c)->library_.ExportBank(b, d) : std::string());

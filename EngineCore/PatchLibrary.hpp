@@ -360,6 +360,26 @@ public:
         return true;
     }
 
+    // Browser drag of a patch onto a bank: a copy of its file (bytes kept)
+    // into the first free slot of `to` (its own bank too = a duplicate), as
+    // NNN.sy1. Returns the slot, -1 = `to` is full, -2 = refused / failed.
+    int Copy(size_t bank, size_t slot, size_t to) {
+        if (bank >= banks_.size() || to >= banks_.size() || slot >= size_t(kBankSlots) || banks_[to].readOnly ||
+            banks_[bank].slots[slot].Empty())
+            return -2;
+        const PatchRef src = banks_[bank].slots[slot];
+        PatchBank &dst = banks_[to];
+        std::error_code ec;
+        for (int s = 0; s < kBankSlots; ++s) {
+            const std::filesystem::path target = std::filesystem::path(dst.source) / SlotFileName(s);
+            if (!dst.slots[size_t(s)].Empty() || std::filesystem::exists(target, ec)) continue;
+            if (!std::filesystem::copy_file(src.file, target, ec)) return -2;
+            dst.slots[size_t(s)] = {src.name, target.string()};
+            return s;
+        }
+        return -1;
+    }
+
 private:
     // Numbered names take their slot, the rest fill free slots in name order.
     static void AssignSlots(PatchBank &bank, std::vector<std::pair<std::string, PatchRef>> files) {
@@ -798,6 +818,12 @@ public:
         if (bank < 0 || slot < 0 || !lib_.Write(size_t(bank), size_t(slot), p)) return false;
         ++generation_, ++revision_;
         return true;
+    }
+    int Copy(int bank, int slot, int to) {
+        EnsureScanned();
+        const int s = bank < 0 || slot < 0 || to < 0 ? -2 : lib_.Copy(size_t(bank), size_t(slot), size_t(to));
+        if (s >= 0) ++generation_, ++revision_;
+        return s;
     }
 
     // Browser drag and drop: the patch of slot `from` goes to slot `to`, an

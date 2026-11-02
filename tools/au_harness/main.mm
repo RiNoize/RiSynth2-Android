@@ -134,6 +134,9 @@ int main() {
         expect(h.libraryRevision(h.ctx) != rev && !h.libraryScanning(h.ctx) &&
                    std::strstr(h.libraryJSON(h.ctx), "\"Finder Bank\"") != nullptr, "background rescan adopted");
     }
+    // drag onto a bank = copy into its first free slot (bank 0 = "Finder Bank", 001 taken)
+    expect(h.copyPatch(h.ctx, 0, 0, 0) == 1 &&
+               std::system("test -f '/tmp/oxo_s2_ios_harness_lib/Finder Bank/002.sy1'") == 0, "copy patch");
     // Initialize patch = Synth2's INIT; the double-click default follows it
     int32_t lo = 0, hi = 0, def = 0;
     h.paramInfo(h.ctx, 33, &lo, &hi, &def);
