@@ -134,6 +134,8 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   the tables' sources). `reference/renders/` + `reference/derived/`
   (download, README "Reference data") and `reference/presets/` are
   gitignored.
+- `docs/images/` — README pictures (`synth2_preview.png` = a copy of the
+  site's gallery_2, shown at 800 px via an HTML `<img width>`).
 - `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
   `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: hidden-param
   auwrapper + AudioUnitSDK deployment target.

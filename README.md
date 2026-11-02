@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/synth2_preview.png" width="600" alt="The Synth2 panel"></p>
+
 # Synth2
 
 A free, open-source recreation of **Synth1**, the classic freeware synthesizer by Daichi Laboratory ([website](https://daichilab.sakura.ne.jp/softsynth/index.html)).
