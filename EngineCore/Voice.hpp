@@ -175,7 +175,7 @@ public:
                 glideTick_ = 16;
                 // r -> r * a - E * (1 - a): exponential, aimed E past the target (lands)
                 const double r = glide_ - note_, a = std::exp(-16.0 / (tables::kPortaTau[p[kPortaTime]] * sampleRate_));
-                const double rest = std::max(std::abs(r) * a - kGlideOvershoot * (1 - a), 0.0);
+                const double rest = std::max(std::abs(r) * a - glideAim_ * (1 - a), 0.0);
                 glide_ = note_ + (r < 0 ? -rest : rest);
             }
         }
@@ -453,7 +453,9 @@ private:
     };
 
     static double Wrap(double ph) { return ph - std::floor(ph); }
-    static constexpr double kGlideStep = 12.0 / 128, kGlideOvershoot = 2 * kGlideStep; // semitones
+    // (measured, measure_porta.py) a glide aims 1.35 % of its starting
+    // distance past the target (the curve scales with the interval)
+    static constexpr double kGlideStep = 12.0 / 128, kGlideAim = 0.0135; // semitones, x distance
     // (measured, measure_pitch_mod.py) pitch bend + LFO pitch (cents) play in
     // 1/128-octave steps, truncated toward 0 (the mod env's pitch does not)
     static double PitchMod(double cents) { return 9.375 * std::trunc(cents / 9.375); }
@@ -461,6 +463,7 @@ private:
     void SetNote(int note, bool glide) {
         note_ = note;
         if (!glide) glide_ = note;
+        glideAim_ = kGlideAim * std::abs(glide_ - note);
         glideTick_ = 16;
     }
 
@@ -473,6 +476,7 @@ private:
     int note_ = 0, velocity_ = 0;
     double unisonSemis_ = 0, unisonPan_ = 0, unisonPhase_ = 0;
     double glide_ = 0; // gliding pitch (semis); (measured) a never-used voice starts from note 0
+    double glideAim_ = 0;
     int glideTick_ = 16;
     uint64_t age_ = 0;
     bool gate_ = false;

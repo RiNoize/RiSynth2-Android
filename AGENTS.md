@@ -505,8 +505,8 @@ original AU; keeps both renders for listening).
   render loop, s2render).
 - PORTAMENTO (`measure_porta.py` → `kPortaTau`): every 16 samples the
   distance r ← max(r·a − E·(1−a), 0), a = exp(−16/(tau·sr)) (tau in s, same
-  at any rate), E = 18.75 cents past the target (lands in finite time,
-  ~308 ms for an octave at 64); played pitch = target + ceil(r / 9.375
+  at any rate), E = 1.35 % of the glide's starting distance past the
+  target (lands in finite time, ~310 ms at 64 whatever the interval); played pitch = target + ceil(r / 9.375
   cents) steps (1/128 octave: slow glides end in audible steps). A voice
   glides from ITS OWN last pitch (never used: MIDI note 0, so the first
   note after loading sweeps up from far below); mono / legato always use
@@ -645,8 +645,8 @@ original AU; keeps both renders for listening).
   arp random sequence (+ S&H / smooth LFO: not the original's PRNG), EQ
   above 8 kHz, LPDL resonance frequency near the top
   cutoffs.
-- Portamento over very large glides (from note 0, first notes) runs a
-  little slower than the original after ~100 ms (tau fitted on octaves).
+- Portamento: glides of 2+ octaves land ~30 ms earlier than the
+  original's (the last steps; mid-glide matches).
 - Random sequences (arp random, S&H / smooth LFO) are not the
   original's PRNG: presets using them (patch0368: random arp) move in the
   scores whenever our RNG draw order changes.

@@ -8,8 +8,10 @@ pitch tracked at 0.5 ms. The original's glide (all fitted per knob, rms
 ~5 cents over the whole glide):
 - every 16 samples r <- max(r * a - E * (1 - a), 0), r = distance to the
   target in cents, a = exp(-16 / (tau * sr)): an exponential approach
-  aimed E = 18.75 cents (2 steps) PAST the target, so it lands in finite
-  time; tau in seconds (same at 44.1 / 48 / 96 kHz);
+  aimed E PAST the target, so it lands in finite time; E = 1.35 % of the
+  distance at the glide's start (the curves normalized by the interval
+  coincide from 6 to 60 semitones; 18.75 cents here at 12, fitted with
+  it); tau in seconds (same at 44.1 / 48 / 96 kHz);
 - the pitch played is the target + ceil(r / 9.375) * 9.375 cents (1/128
   octave steps: the end of a slow glide is an audible staircase).
 Glide sources (check_unison.py porta cases): a voice glides from ITS OWN
