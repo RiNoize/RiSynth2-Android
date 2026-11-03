@@ -34,6 +34,7 @@ struct Rng {
 inline constexpr double kOscAmplitude = 0.2;  // (measured) sine/saw/tri peak at gain 64, vel 127
 inline constexpr double kNoiseAmplitude = 1.1265; // (measured) uniform white, rms 0.508 FS after the post lowpass
 inline constexpr int kDetuneOscs = 8;
+inline constexpr double kFmRefInc = 261.6255653 / 44100.0; // (measured) FM deviation unit, cycles per sample
 inline constexpr double kRingDetuneLimit = 1.7; // (fitted) ring + osc1 detune + sub: osc1 section limiter
 inline constexpr double kDetuneOffsets[kDetuneOscs] = {-7, -5, -3, -1, 1, 3, 5, 7}; // x d cents (measured)
 
@@ -297,7 +298,10 @@ public:
             if (osc2Silent && shape2 != 4) o2 = 0;
 
             // ---- osc1 (+ detune copies, + sub) ----
-            const double fm = 1.0 + fmB * o2;
+            // (measured, measure_fm_key.py) the deviation is a FIXED phase step
+            // per sample (beta x key 60 at 44.1 kHz): the index falls an octave
+            // up, rises with the sample rate
+            const double fm = 1.0 + fmB * o2 * (kFmRefInc / incA);
             double o1 = shape1At(osc1Phase_);
             double sub = subOn ? subAt(subPhase_) : 0.0;
             if (detuneOn) {

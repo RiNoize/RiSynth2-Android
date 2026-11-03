@@ -442,7 +442,10 @@ original AU; keeps both renders for listening).
   osc2 pitch = integer-semitone table (±60), fine/tune 1 cent/step dead zone
   62..66. kbd track off = fixed 220 Hz. Osc1 detune: main + 8 copies at
   ±1,3,5,7 × d cents, d = 20 v/127, each ×0.297 (sine 0.288).
-  FM: inst f1 = f1 (1 + beta[v] osc2_norm) (table, to ~102). Ring: osc2 ×
+  FM: inst f1 = f1 + beta[v]·261.63 Hz·(sr/44100)·osc2_norm (table measured
+  at key 60, to ~102): the deviation is a FIXED phase step per sample
+  (`measure_fm_key.py`): index halves per octave up (keys and key shift),
+  grows with the sample rate. Ring: osc2 ×
   osc1_norm. Ring BUG kept on purpose (`measure_ring_detune.py`): ring +
   osc1 detune + sub on = the sub copies skip the 0.297 gain, then the osc1
   section is bounded (modelled 1.7·tanh(x/1.7), approximate; the original
@@ -588,8 +591,9 @@ original AU; keeps both renders for listening).
   arp random sequence (+ S&H / smooth LFO / noise sequences: not the
   original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top
   cutoffs.
-- Worst presets: patch0106 (+18 dB), patch0025, patch0163 (sync + FM + arp
-  + fx combos), patch0010 (LPDL + smooth random LFO). A resonant LP24
+- Worst presets: patch0106 (+21 dB), patch0025, patch0163 (sync + FM + arp
+  + fx combos; isolated: sync + FM 64 + osc2 PULSE is ~20 dB too loud at
+  keys 36 / 48, fine without sync or with a triangle), patch0010 (LPDL + smooth random LFO). A resonant LP24
   pulled shut by a strongly negative env with a slow attack stays louder
   in the original. PW law gap: full-ish LFO / mod env depth lands ~1.5 /
   254 short near the extremes.
