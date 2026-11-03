@@ -213,7 +213,7 @@ OXO_TEST(StealingASoundingVoiceDoesNotClick) {
     std::vector<float> x(48002), r(48002);
     s.NoteOn(48, 100);
     s.Render(x.data(), r.data(), 24002);
-    s.NoteOn(48, 100); // steals the only voice
+    s.NoteOn(50, 100); // steals the only voice (the same key would release it first)
     s.Render(x.data() + 24002, r.data(), 24000);
     // a click = a jump off the waveform's curve: large second difference
     const auto kink = [&](int from, int to) {
@@ -317,6 +317,18 @@ OXO_TEST(PolyPortamentoGlidesFromTheVoicesLastPitch) {
     s.Render(x.data(), r.data(), 4800);
     const double hz = SineHz(x, 480, 1440, 48000);
     OXO_EXPECT(hz > 440 * std::exp2((60 - 69) / 12.0) && hz < 440 * std::exp2((64 - 69) / 12.0));
+}
+
+// (measured) poly: a key pressed again while held releases its voice and
+// starts a fresh one (one held voice, not two stacked).
+OXO_TEST(HeldKeyPressedAgainKeepsOneVoice) {
+    Synth s;
+    s.SetSampleRate(48000);
+    s.NoteOn(60, 100);
+    Run(s, 480);
+    s.NoteOn(60, 100);
+    Run(s, 480);
+    OXO_EXPECT_EQ(s.GatedVoices(), 1);
 }
 
 // (measured) a mono retrigger restarts the oscillator phases (osc phase > 0).

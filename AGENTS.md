@@ -431,7 +431,11 @@ original AU; keeps both renders for listening).
   Sine/saw/tri amplitude 0.2 at gain 64 vel 127; pulse = (saw(p)-saw(p+d))/2
   (half amplitude), d = pw/254 (127 = square); the FINAL d (after LFO /
   mod env) is clamped to [1.25/254, 1 − 1.375/254]: pw 0 = pw 1, never
-  silent. Noise uniform x1.1265.
+  silent. NOISE (`measure_noise.py`): a 1-bit sequence s[n] = s[n-13] ^
+  s[n-18] ^ s[n-19] ^ s[n-20] (from 16 zeros, 1, 0, 1, 0; `kNoiseSeed`),
+  ±0.6504; per voice slot, carried across notes (frozen while idle) like
+  the oscillators; a synced osc1 wrap restarts it (the timbre of synced
+  noise = that bit pattern).
 - Osc: per-note band-limited tables (EVERY harmonic below Nyquist, alias
   free); osc silent when its note index > 127. Fundamentals of all shapes in
   phase (saw falling +1 at phase 0, tri peak at 0.25). osc1 shapes 0 sine 1
@@ -450,9 +454,7 @@ original AU; keeps both renders for listening).
   osc1 detune + sub on = the sub copies skip the 0.297 gain, then the osc1
   section is bounded (modelled 1.7·tanh(x/1.7), approximate; the original
   also has osc1 × sub products); no effect without detune. Sync hard: NAIVE reset of osc2 to phase 0 (same alias energy
-  as the original to 0.1 dB; do not band-limit). Synced noise: the original
-  restarts its noise generator from a fixed state at every osc1 wrap
-  (pitched).
+  as the original to 0.1 dB; do not band-limit).
 - Fixed output lowpass: bilinear one-pole, analog 22 kHz, NO prewarp.
 - Amp env: linear attack 0.5 ms·2^(v/8.05); decay/release exponential
   tau table (same law); sustain = curved table. Filter env = same times,
@@ -509,6 +511,14 @@ original AU; keeps both renders for listening).
   Stealing: the oldest RELEASED voice first, then the oldest held one
   (age = start time in samples). A stolen voice still sounding keeps its
   filter / output state and a free-running sub (resetting them clicked).
+  Poly: a key pressed again while held releases its voice (stack), the
+  note starts on a fresh one.
+- VOICE END (`measure_noise.py`, noise position = slot sample counter):
+  the env ends under -66 dB (`kSilence` 4.95e-4, release AND decay; a
+  decayed held note stays allocated, silent), the voice at the first
+  256-sample boundary after (host block relative, `Synth::BeginBlock`).
+  The original then leaves a -108 dB residue for 8960 samples (not
+  modelled).
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
   patches). A patch LOAD (editor / browser: `PatchLoading` → VST3
   "OxoPatchLoad", AUv3 flag) also fades the voice mix (pre effects): 25 ms
@@ -606,7 +616,7 @@ original AU; keeps both renders for listening).
   Helpers: `envelope.py`, `pitch.py`, `instfreq.py`, `cutoff_probe.py`
   (effective cutoff in LP12 knob units), `filtermodels.py`, `fit_*.py`.
 - IDENTICAL-NOISE TRICK: osc2 noise is the same sequence in every fresh
-  process, so H(f) = Pxy/Pxx against a flat reference render (HP12 cut 0)
+  process (and ours is the same sequence now), so H(f) = Pxy/Pxx against a flat reference render (HP12 cut 0)
   gives exact complex transfer functions (filters, EQ, delay tone, ...).
   Pulse pw 0 is NOT silence (narrow pulse, it excites LPDL
   self-oscillation): silence osc1 with mix 127 instead.
@@ -625,12 +635,12 @@ original AU; keeps both renders for listening).
 - Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.11
   dB, spec 2.70 dB, env 3.16 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
-  arp random sequence (+ S&H / smooth LFO / noise sequences: not the
-  original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top
+  arp random sequence (+ S&H / smooth LFO: not the original's PRNG), EQ
+  above 8 kHz, LPDL resonance frequency near the top
   cutoffs.
 - Portamento over very large glides (from note 0, first notes) runs a
   little slower than the original after ~100 ms (tau fitted on octaves).
-- Random sequences (arp random, S&H / smooth LFO, noise) are not the
+- Random sequences (arp random, S&H / smooth LFO) are not the
   original's PRNG: presets using them (patch0368: random arp) move in the
   scores whenever our RNG draw order changes.
 - Worst presets: patch0106 (+21 dB), patch0025, patch0163 (sync + FM + arp

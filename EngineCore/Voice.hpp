@@ -32,7 +32,13 @@ struct Rng {
 };
 
 inline constexpr double kOscAmplitude = 0.2;  // (measured) sine/saw/tri peak at gain 64, vel 127
-inline constexpr double kNoiseAmplitude = 1.1265; // (measured) uniform white, rms 0.508 FS after the post lowpass
+// (measured, measure_noise.py) osc2 noise = a 1-bit sequence s[n] = s[n-13]
+// ^ s[n-18] ^ s[n-19] ^ s[n-20] played as +-kNoiseLevel. Every voice slot
+// starts it from kNoiseSeed (the 20 bits before the first output) and
+// carries on across notes (frozen while idle) like the oscillators; a
+// synced osc1 wrap restarts it.
+inline constexpr double kNoiseLevel = 0.65039;
+inline constexpr uint32_t kNoiseSeed = 0x70A6E;
 inline constexpr int kDetuneOscs = 8;
 inline constexpr double kFmRefInc = 261.6255653 / 44100.0; // (measured) FM deviation unit, cycles per sample
 inline constexpr double kRingDetuneLimit = 1.7; // (fitted) ring + osc1 detune + sub: osc1 section limiter
@@ -63,7 +69,7 @@ public:
     // glide: portamento from this voice's own last pitch (measured).
     // detuneCents / pan (-1..1) / pitchSemis / phase (cycles): this voice's
     // place in a unison stack.
-    void Start(int note, int velocity, bool glide, const PatchValues &p, Rng &rng, uint64_t age,
+    void Start(int note, int velocity, bool glide, const PatchValues &p, uint64_t age,
                double detuneCents = 0, double pan = 0, double pitchSemis = 0, double unisonPhase = 0) {
         unisonSemis_ = detuneCents / 100.0 + pitchSemis;
         unisonPan_ = pan;
@@ -82,7 +88,8 @@ public:
         modEnv_.Configure(sampleRate_, p[kModEnvAttack], p[kModEnvDecay], 0, 0, Adsr::SustainLaw::Linear);
         modEnv_.Trigger();
         unisonPhase_ = unisonPhase;
-        StartPhases(p, rng, !stolen);
+        StartPhases(p, !stolen);
+        tail_ = false;
         // A stolen voice still sounding keeps its filter / output state:
         // zeroing them under a live signal clicks (the original doesn't).
         if (!stolen) {
@@ -94,7 +101,7 @@ public:
     // Oscillator start phases (Start; a mono retrigger restarts them too).
     // relockSub: false = a free-running (osc phase 0) sub keeps its phase
     // (re-locking it on a stolen, sounding voice clicks).
-    void StartPhases(const PatchValues &p, Rng &rng, bool relockSub = true) {
+    void StartPhases(const PatchValues &p, bool relockSub = true) {
         // (measured) osc phase 0 = free: the slot's phases carry on (InitSlot);
         // > 0 = osc1 starts at phase 0, osc2 at (v - 1) / 126 of half a cycle
         // (127 = 180 degrees), both shifted by the unison phase.
@@ -113,7 +120,6 @@ public:
             subPhase_ = osc1Phase_ * subRatio;
             for (int i = 0; i < kDetuneOscs; ++i) subDetunePhase_[i] = detunePhase_[i] * subRatio;
         }
-        noiseRng_.state = rng.NextU32() | 1u;
     }
 
     // Mono / legato note change on a sounding voice.
@@ -133,14 +139,19 @@ public:
         amp_.ReleaseNote();
         filterEnv_.ReleaseNote();
     }
-    void Kill() { amp_.Reset(); }
+    void Kill() {
+        amp_.Reset();
+        tail_ = false;
+    }
     // Filter / output state cleared (a patch switch, at silence).
     void ClearFilters() {
         filter_.Reset();
         postZ_ = postY_ = 0;
     }
 
-    bool Active() const { return amp_.Active(); }
+    // (measured, measure_noise.py) a released voice ends at the first
+    // 256-sample block boundary after its envelope fell silent (-66 dB).
+    bool Active() const { return amp_.Active() || tail_; }
     bool Gate() const { return gate_; }
     int Note() const { return note_; }
     uint64_t Age() const { return age_; }
@@ -148,7 +159,8 @@ public:
     // lfo[k] = LFO k's per-sample value (nullptr when that LFO is off).
     // cutoffKnob / cutoffStep: the smoothed cutoff knob at the block start and
     // its per-sample ramp (Synth's 50 ms glide, measured).
-    void Render(float *left, float *right, int frames, const PatchValues &p, double bendSemis,
+    // pos: the chunk's first sample in the engine's sample count.
+    void Render(float *left, float *right, int frames, int64_t pos, const PatchValues &p, double bendSemis,
                 const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         if (!Active()) return;
         if (p[kPortaTime] <= 0) glide_ = note_;
@@ -157,7 +169,7 @@ public:
             const bool gliding = glide_ != note_;
             const int n = gliding ? std::min(frames - off, glideTick_) : frames - off;
             const double *at[2] = {lfo[0] ? lfo[0] + off : nullptr, lfo[1] ? lfo[1] + off : nullptr};
-            RenderChunk(left + off, right + off, n, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
+            RenderChunk(left + off, right + off, n, pos + off, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
             off += n;
             if (gliding && (glideTick_ -= n) == 0) {
                 glideTick_ = 16;
@@ -170,7 +182,7 @@ public:
     }
 
 private:
-    void RenderChunk(float *left, float *right, int frames, const PatchValues &p, double bendSemis,
+    void RenderChunk(float *left, float *right, int frames, int64_t pos, const PatchValues &p, double bendSemis,
                      const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         // ---- LFO routing (measured depth laws per destination). Both LFOs on
         // one destination (measured, measure_lfo_sum.py): pitch = sum of each
@@ -337,7 +349,12 @@ private:
             case 1: o2 = saw2.Read(osc2Phase_); break;
             case 2: o2 = 0.5 * (saw2.Read(osc2Phase_) - saw2.Read(Wrap(osc2Phase_ + w))); break;
             case 3: o2 = tri2.Read(osc2Phase_); break;
-            default: o2 = kNoiseAmplitude * noiseRng_.Bipolar(); break;
+            default: {
+                const uint32_t bit = (noise_ >> 12 ^ noise_ >> 17 ^ noise_ >> 18 ^ noise_ >> 19) & 1;
+                noise_ = (noise_ << 1 | bit) & 0xFFFFF;
+                o2 = bit ? kNoiseLevel : -kNoiseLevel;
+                break;
+            }
             }
             if (osc2Silent && shape2 != 4) o2 = 0;
 
@@ -379,7 +396,7 @@ private:
                 // (measured, v1.12 manual "synced noise") the noise generator
                 // restarts too, from one fixed state shared by every voice and
                 // note: synced noise repeats per osc1 cycle (pitched)
-                noiseRng_.state = Rng{}.state;
+                noise_ = kNoiseSeed;
             } else {
                 osc2Phase_ = Wrap(osc2Phase_ + incB);
             }
@@ -408,6 +425,11 @@ private:
             }
             left[i] += float(y * gl);
             right[i] += float(y * gr);
+            if (!amp_.Active() && ((pos + i + 1) & 255) == 0) {
+                tail_ = false;
+                break;
+            }
+            tail_ = !amp_.Active();
         }
     }
 
@@ -450,7 +472,8 @@ private:
     bool gate_ = false;
     double osc1Phase_ = 0, osc2Phase_ = 0, subPhase_ = 0;
     std::array<double, kDetuneOscs> detunePhase_{}, subDetunePhase_{};
-    Rng noiseRng_;
+    uint32_t noise_ = kNoiseSeed;
+    bool tail_ = false; // envelope done, running silent to the block boundary
     double postA_ = 1, postB_ = 0, postZ_ = 0, postY_ = 0;
 };
 

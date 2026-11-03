@@ -106,6 +106,7 @@ void Synth2Render(void *instance, uint32_t frames, AudioBufferList *output, cons
     if (output->mNumberBuffers == 1) out[1] = inst->ScratchR();
     inst->SetTransport(tempo, beat, playing != 0);
     inst->ApplyDirty();
+    inst->BeginBlock();
 
     uint32_t pos = 0;
     // note on / off -> the original's 16-sample grid (NoteEventOffset)

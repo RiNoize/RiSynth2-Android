@@ -51,7 +51,10 @@ public:
                 stage_ = Stage::Decay;
             }
             break;
-        case Stage::Decay: level_ += (sustain_ - level_) * decayCoef_; break;
+        case Stage::Decay:
+            level_ += (sustain_ - level_) * decayCoef_;
+            if (level_ < kSilence) level_ = 0; // (measured) silent but still held
+            break;
         case Stage::Release:
             level_ -= level_ * releaseCoef_;
             if (level_ < kSilence) Reset();
@@ -61,7 +64,7 @@ public:
     }
 
 private:
-    static constexpr double kSilence = 1e-4; // -80 dB: the original's tails end ~9 tau
+    static constexpr double kSilence = 4.95e-4; // (measured, measure_noise.py) -66 dB = 7.61 tau
 
     Stage stage_ = Stage::Idle;
     double level_ = 0;

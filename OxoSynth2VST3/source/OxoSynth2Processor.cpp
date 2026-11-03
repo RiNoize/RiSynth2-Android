@@ -234,6 +234,7 @@ tresult PLUGIN_API OxoSynth2Processor::process(Vst::ProcessData &data) {
             if (p.kind == 0) applyParameter(p.id, p.value, p.offset, data.outputParameterChanges);
         return kResultOk;
     }
+    synth_.BeginBlock();
     float *left = data.outputs[0].channelBuffers32[0];
     float *right = data.outputs[0].channelBuffers32[1];
     int32 pos = 0;

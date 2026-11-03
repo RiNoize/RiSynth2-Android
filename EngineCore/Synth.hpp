@@ -176,6 +176,11 @@ private:
                 if (mode == 1) RetriggerPhases();
                 return;
             }
+        } else {
+            // (measured, poly) a key pressed again while held: its voice (stack)
+            // is released and the note starts on a fresh voice
+            for (Voice &v : voices_)
+                if (v.Active() && v.Gate() && v.Note() == key) v.Release();
         }
         // (measured, measure_porta.py) a fresh note glides from its voice's
         // own last pitch (auto mode: never); mono / legato always use voice
@@ -183,7 +188,7 @@ private:
         const bool glide = porta && !values_[kPortaAuto];
         if (!values_[kUnisonOn]) {
             Voice &v = mode != 0 ? MonoVoice(0) : *AllocateVoice();
-            v.Start(key, velocity, glide, values_, rng_, now_);
+            v.Start(key, velocity, glide, values_, now_);
             return;
         }
         // (measured) unison: N voices evenly over +-D cents, pan spread
@@ -193,7 +198,6 @@ private:
         // (measured, check_unison.py) the lowest voice goes right below 64
         const double spread = (values_[kUnisonPan] - 64) / 64.0;
         const uint64_t age = now_;
-        const Rng shared = rng_; // the stacked voices share one noise sequence
         // (measured) unison phase shift (osc phase > 0; with 0 the slots'
         // phases carry on): the k-th voice started starts kPhaseDeg[k] * v /
         // 127 degrees later (any voice count; = the slots' initial phases).
@@ -207,23 +211,21 @@ private:
         // place twice); the phase shift follows k.
         const int sounding = std::min(n, std::clamp<int>(values_[kPolyphony], 1, kMaxVoices));
         for (int k = 0; k < sounding; ++k) {
-            Rng voice = shared;
             Voice *slot = mode != 0 ? &MonoVoice(k) : AllocateVoice(true);
             if (!slot) break;
             Voice &v = *slot;
             const int i = lastVoice_ % n;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
-            v.Start(key, velocity, glide, values_, voice, age, t * d, t * spread,
+            v.Start(key, velocity, glide, values_, age, t * d, t * spread,
                     (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[k] * shift);
         }
-        rng_.NextU32();
     }
 
     // (measured, check_unison.py) a mono retrigger restarts the oscillator
     // phases like a new note (osc phase > 0; a stack keeps its offsets).
     void RetriggerPhases() {
         for (Voice &v : voices_)
-            if (v.Active() && v.Gate()) v.StartPhases(values_, rng_);
+            if (v.Active() && v.Gate()) v.StartPhases(values_);
     }
 
     void RemoveHeld(int key) {
@@ -425,7 +427,8 @@ public:
             }
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
-            for (Voice &v : voices_) v.Render(left + pos, right + pos, n, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+            for (Voice &v : voices_)
+                v.Render(left + pos, right + pos, n, blockPos_ + pos, values_, bendSemis, lfo, cutoffStart, cutoffStep);
             if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
             toArp = ArpAdvance(n);
         }
@@ -446,7 +449,12 @@ public:
         }
         volume_ = volumeTarget_;
         now_ += uint64_t(std::max(frames, 0));
+        blockPos_ += std::max(frames, 0);
     }
+
+    // A host block starts (before its first Render): the original's voice
+    // end grid (256 samples) counts from there, like NoteEventOffset.
+    void BeginBlock() { blockPos_ = 0; }
 
     // Master volume (kVolumeParamId, not a patch parameter): survives Reset.
     void SetVolume(int32_t v) { volumeTarget_ = VolumeGain(ClampValue(kVolumeParamId, v)); }
@@ -594,6 +602,7 @@ private:
     int arpCountdown_ = 0, arpGateCountdown_ = 0;
     double arpAccum_ = 0;
     uint64_t now_ = 0; // samples rendered: a voice's age = its start time
+    int64_t blockPos_ = 0; // samples since BeginBlock
     enum class Switch { None, Out, Hold, In } switch_ = Switch::None; // patch switch fade
     double switchX_ = 1;
     int64_t switchQuiet_ = 0, switchHeld_ = 0;
