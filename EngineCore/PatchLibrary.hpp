@@ -623,10 +623,11 @@ inline int CopyBankTree(const std::filesystem::path &src, const std::filesystem:
 }
 
 // Banks shipped next to the factory bank (bundle resources) and COPIED into
-// the library once: each sub-folder becomes a bank the user owns (write,
-// delete, rename). Copied names are recorded in the library's kSeededFile,
-// so a deleted / renamed bank never comes back, a reinstall never overwrites
-// one and a plugin update copies only the banks it adds.
+// the library once per installed build: each sub-folder becomes a bank the
+// user owns (write, delete, rename). The library's kSeededFile holds the
+// build that seeded last: within one build a deleted / renamed bank stays
+// so; a new build (install / update) adds again every starter bank whose
+// name is free, never writing into an existing one.
 inline constexpr const char *kStarterBanksFolder = "Synth2 Starter Banks";
 inline constexpr const char *kSeededFile = ".starter_banks";
 
@@ -643,40 +644,32 @@ inline bool RenameNoReplace(const std::filesystem::path &from, const std::filesy
 #endif
 }
 
-// Copies the starter banks not yet recorded; a bank whose name is already
-// taken in the library root (the user's own bank, even empty, or a file) is
-// NEVER written into, only recorded. Each bank is written to a hidden temp
-// folder renamed into place without replacing anything, so two instances
-// starting at once can't leave a half bank or a "Bank 2". Returns the number
-// of banks copied.
-inline int SeedStarterBanks(const std::filesystem::path &root, const std::filesystem::path &starter) {
+// Unless `build` (the plugin's CFBundleVersion) already seeded this library,
+// copies every starter bank whose name is free; a name already taken in the
+// library root (the user's own bank, even empty, a file, a link) is NEVER
+// written into. Each bank is written to a hidden temp folder renamed into
+// place without replacing anything, so two instances starting at once can't
+// leave a half bank or a "Bank 2". Returns the number of banks copied.
+inline int SeedStarterBanks(const std::filesystem::path &root, const std::filesystem::path &starter,
+                            const std::string &build) {
     std::error_code ec;
     if (root.empty() || starter.empty() || !std::filesystem::is_directory(starter, ec) ||
         !std::filesystem::is_directory(root, ec))
         return 0;
     const std::filesystem::path record = root / kSeededFile;
+    const std::string stamp = "build " + build + "\n";
     std::string text;
-    ReadTextFile(record, text);
-    std::vector<std::string> seeded;
-    for (size_t at = 0; at < text.size();) {
-        size_t end = text.find_first_of("\r\n", at);
-        if (end == std::string::npos) end = text.size();
-        if (end > at) seeded.push_back(text.substr(at, end - at));
-        at = end + 1;
-    }
+    if (ReadTextFile(record, text) && text == stamp) return 0;
     int n = 0;
     for (const auto &src : FolderChildren(starter)) {
-        const std::string name = SafeName(src.filename().string());
-        if (!std::filesystem::is_directory(src, ec) || std::find(seeded.begin(), seeded.end(), name) != seeded.end())
+        const std::filesystem::path dest = root / SafeName(src.filename().string());
+        if (!std::filesystem::is_directory(src, ec) || std::filesystem::exists(std::filesystem::symlink_status(dest, ec)))
             continue;
-        const std::filesystem::path dest = root / name;
-        if (!std::filesystem::exists(std::filesystem::symlink_status(dest, ec))) {
-            const std::filesystem::path temp = root / (".oxo_seed_" + std::to_string(std::random_device{}()) + ".tmp");
-            if (CopyBankTree(src, temp) > 0) n += RenameNoReplace(temp, dest);
-            if (std::filesystem::exists(temp, ec)) std::filesystem::remove_all(temp, ec); // lost the race
-        }
-        if (std::filesystem::exists(dest, ec)) std::ofstream(record, std::ios::binary | std::ios::app) << name << '\n';
+        const std::filesystem::path temp = root / (".oxo_seed_" + std::to_string(std::random_device{}()) + ".tmp");
+        if (CopyBankTree(src, temp) > 0) n += RenameNoReplace(temp, dest);
+        if (std::filesystem::exists(temp, ec)) std::filesystem::remove_all(temp, ec); // lost the race
     }
+    std::ofstream(record, std::ios::binary | std::ios::trunc) << stamp;
     return n;
 }
 
@@ -747,12 +740,14 @@ public:
 
     // `root` = the library folder (created with an empty "User" bank),
     // `factory` = the read-only factory bank folder in the plugin bundle; its
-    // sibling kStarterBanksFolder is seeded into the library.
-    void Configure(const std::filesystem::path &root, const std::filesystem::path &factory = {}) {
+    // sibling kStarterBanksFolder is seeded into the library once per `build`
+    // (the plugin's CFBundleVersion).
+    void Configure(const std::filesystem::path &root, const std::filesystem::path &factory = {},
+                   const std::string &build = {}) {
         root_ = root;
         factory_ = factory;
         EnsureRoot();
-        if (!factory.empty()) SeedStarterBanks(root_, factory.parent_path() / kStarterBanksFolder);
+        if (!factory.empty()) SeedStarterBanks(root_, factory.parent_path() / kStarterBanksFolder, build);
     }
     // Moves a file to the Trash, false = no Trash here (then it is deleted).
     void SetTrash(std::function<bool(const std::filesystem::path &)> trash) { trash_ = std::move(trash); }

@@ -39,9 +39,11 @@ public:
     virtual void AllNotesOff() = 0;     // menu: s2::Synth::Panic on the audio side
 
     // ---- shared ----
-    // `factory` = the read-only factory bank in the plugin bundle.
-    void ConfigureLibrary(const std::filesystem::path &root, const std::filesystem::path &factory = {}) {
-        library_.Configure(root, factory);
+    // `factory` = the read-only factory bank in the plugin bundle, `build` =
+    // the plugin's CFBundleVersion (starter banks: once per build).
+    void ConfigureLibrary(const std::filesystem::path &root, const std::filesystem::path &factory = {},
+                          const std::string &build = {}) {
+        library_.Configure(root, factory, build);
         library_.SetTrash(MoveToTrash);
     }
     s2::PatchManager &Library() { return library_; }

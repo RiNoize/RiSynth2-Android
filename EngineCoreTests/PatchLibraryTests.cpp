@@ -290,10 +290,11 @@ OXO_TEST(FactoryBankIsFirstAndReadOnly) {
     fs::remove_all(base);
 }
 
-// Starter banks (next to the factory bank) are copied into the library once:
-// a deleted / edited copy stays so, a new starter bank is added later, a
-// folder of the same name already in the library is left alone.
-OXO_TEST(StarterBanksAreSeededOnce) {
+// Starter banks (next to the factory bank) are copied into the library once
+// per build: within a build a deleted copy stays deleted; a new build adds
+// back every missing one (an older library's name list = another build); a
+// folder of the same name already in the library is never written into.
+OXO_TEST(StarterBanksAreSeededOncePerBuild) {
     const fs::path base = FreshDir("oxo_s2_starter_test");
     const fs::path root = base / "Synth2", factory = base / "Bundle" / kFactoryBankName,
                    starter = base / "Bundle" / kStarterBanksFolder;
@@ -305,8 +306,9 @@ OXO_TEST(StarterBanksAreSeededOnce) {
     WriteFile(starter / "B" / "001.sy1", "B1\nver=112\n");
     WriteFile(starter / "D" / "001.sy1", "D1\nver=112\n");
     WriteFile(root / "D" / "001.sy1", "Mine\nver=112\n");
+    WriteFile(root / kSeededFile, "A\nB\nD\n"); // a library seeded by an older plugin (name list)
     PatchManager m;
-    m.Configure(root, factory);
+    m.Configure(root, factory, "3");
     OXO_EXPECT(fs::exists(root / "A" / "002.sy1") && fs::exists(root / "B" / "001.sy1"));
     OXO_EXPECT(!fs::exists(root / "A" / "notes.txt") && !fs::exists(root / "Empty"));
     std::string text;
@@ -318,15 +320,23 @@ OXO_TEST(StarterBanksAreSeededOnce) {
     fs::remove_all(root / "A");
     WriteFile(root / "B" / "001.sy1", "Edited\nver=112\n");
     WriteFile(starter / "C" / "001.sy1", "C1\nver=112\n");
-    PatchManager again;
-    again.Configure(root, factory);
-    OXO_EXPECT(!fs::exists(root / "A"));
+    PatchManager again; // same build: nothing comes back, nothing new
+    again.Configure(root, factory, "3");
+    OXO_EXPECT(!fs::exists(root / "A") && !fs::exists(root / "C"));
     ReadTextFile(root / "B" / "001.sy1", text);
     OXO_EXPECT_EQ(text, std::string("Edited\nver=112\n"));
-    OXO_EXPECT(fs::exists(root / "C" / "001.sy1"));
+
+    PatchManager update; // a new build: the missing A and the new C, B and D untouched
+    update.Configure(root, factory, "4");
+    OXO_EXPECT(fs::exists(root / "A" / "002.sy1") && fs::exists(root / "C" / "001.sy1"));
+    ReadTextFile(root / "B" / "001.sy1", text);
+    OXO_EXPECT_EQ(text, std::string("Edited\nver=112\n"));
+    ReadTextFile(root / "D" / "001.sy1", text);
+    OXO_EXPECT_EQ(text, std::string("Mine\nver=112\n"));
+    OXO_EXPECT(!fs::exists(root / "B 2") && !fs::exists(root / "D 2"));
     for (const auto &e : fs::directory_iterator(root))
         OXO_EXPECT(e.path().filename().string().rfind(".oxo_seed_", 0) != 0);
-    OXO_EXPECT_EQ(SeedStarterBanks(root, starter), 0);
+    OXO_EXPECT_EQ(SeedStarterBanks(root, starter, "4"), 0);
     fs::remove_all(base);
 }
 
@@ -342,7 +352,7 @@ OXO_TEST(StarterBanksNeverReplaceUserItems) {
     fs::create_directories(root / "Empty");
     WriteFile(root / "File", "mine");
     fs::create_directory_symlink(base / "gone", root / "Link");
-    OXO_EXPECT_EQ(SeedStarterBanks(root, starter), 0);
+    OXO_EXPECT_EQ(SeedStarterBanks(root, starter, "1"), 0);
     OXO_EXPECT(fs::is_empty(root / "Empty"));
     std::string text;
     ReadTextFile(root / "File", text);

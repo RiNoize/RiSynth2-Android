@@ -76,7 +76,7 @@ tresult PLUGIN_API OxoSynth2Controller::initialize(FUnknown *context) {
         parameters.addParameter(token);
     }
     learnCc_ = storage::LoadMidiLearn();
-    ConfigureLibrary(storage::LibraryRoot(), storage::FactoryRoot());
+    ConfigureLibrary(storage::LibraryRoot(), storage::FactoryRoot(), OXO_BUILD_NUMBER);
     // A fresh instance starts on the library's first patch, like the
     // processor (hosts usually sync us with its state right after anyway).
     s2::Sy1Patch patch;

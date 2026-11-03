@@ -261,15 +261,19 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
 - STARTER BANKS (shipped: "Madame Eljay"): `Shared/Resources/Synth2 Starter
   Banks/<bank>/*.sy1` → bundle `Resources/Synth2 Starter Banks` (sibling
   of the factory folder; CMake loop per bank, Xcode explicit folder).
-  `PatchManager::Configure` → `SeedStarterBanks`: each bank not yet listed
-  in `<library>/.starter_banks` is copied (hidden temp folder + rename,
-  race-safe) as a normal user bank, then listed; a name already in the
-  library root (the user's bank, even empty, a file, a link) is NEVER
-  written into, only listed; the final rename is `RenameNoReplace`
-  (RENAME_EXCL: POSIX rename would replace an empty folder created
-  meanwhile). Never updated / restored afterwards; a bank
-  added in a later version gets copied. Happens on first plugin load (the
-  installer never touches homes).
+  `PatchManager::Configure(root, factory, build)` → `SeedStarterBanks`:
+  ONCE PER BUILD (CFBundleVersion: VST3 `OXO_BUILD_NUMBER` from the
+  generated identity header, AUv3 the appex's Info.plist via
+  `Synth2Create`), recorded as `build N` in `<library>/.starter_banks`
+  (an older name-list file = another build). A new build copies every
+  starter bank whose name is free in the library root (hidden temp folder
+  + rename, race-safe) as a normal user bank: a deleted one comes back
+  with the next install / update, never within the same build. A name
+  already taken (the user's bank, even empty, a file, a link) is NEVER
+  written into; the final rename is `RenameNoReplace` (RENAME_EXCL: POSIX
+  rename would replace an empty folder created meanwhile). Existing copies
+  are never updated. Happens on plugin load (the installer never touches
+  homes).
 - `build_vst3.sh` empties both bundled folders before building (Xcode's
   copy phase never deletes a removed patch).
 - A ZIP FOUND IN THE LIBRARY (any depth) on a rescan (load, browser open,

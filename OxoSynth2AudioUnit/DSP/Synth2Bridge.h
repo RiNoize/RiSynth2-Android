@@ -14,7 +14,7 @@ extern "C" {
 typedef void (*Synth2EditCallback)(void *ctx, int32_t id, int32_t value, int32_t phase);
 
 // factoryRoot = the read-only factory bank folder (appex resources), may be NULL.
-void *Synth2Create(const char *libraryRoot, const char *factoryRoot);
+void *Synth2Create(const char *libraryRoot, const char *factoryRoot, const char *build);
 void Synth2Destroy(void *instance);
 void Synth2SetEditCallback(void *instance, void *ctx, Synth2EditCallback callback);
 OxoSynth2Hooks Synth2MakeHooks(void *instance);

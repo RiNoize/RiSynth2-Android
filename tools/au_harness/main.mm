@@ -13,7 +13,7 @@ int main() {
     int fails = 0;
     auto expect = [&](bool ok, const char *what) { if (!ok) { std::printf("FAIL %s\n", what); ++fails; } };
     std::system("rm -rf /tmp/oxo_s2_ios_harness_lib"); // the checks expect a fresh library ("User" only)
-    void *inst = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr);
+    void *inst = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr, nullptr);
     Synth2Prepare(inst, 48000, 512);
     std::vector<float> L(512), R(512);
     AudioBufferList *abl = (AudioBufferList *)calloc(1, sizeof(AudioBufferList) + sizeof(AudioBuffer));
@@ -57,7 +57,7 @@ int main() {
     int32_t n = Synth2EncodeState(inst, nullptr, 0);
     std::vector<uint8_t> blob(n);
     Synth2EncodeState(inst, blob.data(), n);
-    void *other = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr);
+    void *other = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr, nullptr);
     expect(Synth2RestoreState(other, blob.data(), n) == 1, "restore");
     expect(Synth2GetParam(other, 99) == 64, "default volume restored");
     expect(Synth2GetParam(other, 0) == 3 && Synth2GetParam(other, 19) == 127, "restored values");
@@ -89,7 +89,7 @@ int main() {
         const int32_t sz = Synth2EncodeState(other, nullptr, 0);
         std::vector<uint8_t> st(sz);
         Synth2EncodeState(other, st.data(), sz);
-        void *third = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr);
+        void *third = Synth2Create("/tmp/oxo_s2_ios_harness_lib", nullptr, nullptr);
         OxoSynth2Hooks h3 = Synth2MakeHooks(third);
         h3.loadedProgram(h3.ctx, &pb, &ps);
         expect(pb >= 0 && ps >= 0 && *h3.patchName(h3.ctx) != 0, "fresh instance on the first library patch");

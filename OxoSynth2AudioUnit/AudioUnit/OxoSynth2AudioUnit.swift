@@ -35,7 +35,8 @@ public final class OxoSynth2AudioUnit: AUAudioUnit {
 
     public override init(componentDescription: AudioComponentDescription,
                          options: AudioComponentInstantiationOptions = []) throws {
-        instance = Synth2Create(SynthLibrary.appGroupLibraryRoot.path, SynthLibrary.factoryRoot?.path)
+        instance = Synth2Create(SynthLibrary.appGroupLibraryRoot.path, SynthLibrary.factoryRoot?.path,
+                                Bundle.main.infoDictionary?["CFBundleVersion"] as? String)
         try super.init(componentDescription: componentDescription, options: options)
         let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         outputBus = try AUAudioUnitBus(format: format)

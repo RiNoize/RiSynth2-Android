@@ -52,8 +52,8 @@ void HandleUmp(Synth2Instance *inst, const MIDIEventList &list) {
 
 extern "C" {
 
-void *Synth2Create(const char *libraryRoot, const char *factoryRoot) {
-    return new Synth2Instance(libraryRoot ? libraryRoot : "", factoryRoot ? factoryRoot : "");
+void *Synth2Create(const char *libraryRoot, const char *factoryRoot, const char *build) {
+    return new Synth2Instance(libraryRoot ? libraryRoot : "", factoryRoot ? factoryRoot : "", build ? build : "");
 }
 void Synth2Destroy(void *instance) { delete I(instance); }
 void Synth2SetEditCallback(void *instance, void *ctx, Synth2EditCallback callback) {

@@ -24,14 +24,14 @@ public:
     // phase: 0 = begin gesture, 1 = value, 2 = end gesture
     using EditCallback = void (*)(void *ctx, int32_t id, int32_t value, int32_t phase);
 
-    Synth2Instance(const std::string &libraryRoot, const std::string &factoryRoot) {
+    Synth2Instance(const std::string &libraryRoot, const std::string &factoryRoot, const std::string &build) {
         const s2::MidiLearnTable learned = storage::LoadMidiLearn();
         for (int i = 0; i < s2::kParamCount; ++i) {
             values_[size_t(i)] = s2::kParams[size_t(i)].def;
             learnCc_[size_t(i)] = learned[size_t(i)];
         }
         dirty_[0] = dirty_[1] = ~uint64_t(0);
-        ConfigureLibrary(libraryRoot, factoryRoot);
+        ConfigureLibrary(libraryRoot, factoryRoot, build);
         // A fresh instance plays the library's first patch (Synth1: program
         // 001 of the first bank); a session's fullState replaces it.
         s2::Sy1Patch patch;
