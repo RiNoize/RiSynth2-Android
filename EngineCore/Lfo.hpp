@@ -4,7 +4,7 @@
 // sync resets on the first note of a phrase), bipolar +-1.
 // Native types: 0 saw (falling, +1 at phase 0), 1 triangle (-1 at phase 0),
 // 2 square (+1 first half), 3 sample & hold, 4 smooth random, 5 sine.
-// Speed: Hz = 0.084 * 2^(speed / 12.05).
+// Speed: Hz = 2^(speed / 12.0367) / 12.
 
 #include <algorithm>
 #include <cmath>
@@ -22,7 +22,9 @@ public:
     }
     void ResetPhase() { phase_ = 0; }
 
-    static double SpeedHz(int speed) { return 0.084 * std::exp2(speed / 12.05); }
+    // (measured, measure_lfo_speed.py: square LFO flip times, 0.02 %) speed 0
+    // = a 12 s cycle
+    static double SpeedHz(int speed) { return std::exp2(speed / 12.0367) / 12.0; }
 
     // (measured, measure_lfo_sync.py: every knob value) tempo sync: 30 steps,
     // step = floor(speed * 30 / 128), LFO cycle in beats (quarter notes),

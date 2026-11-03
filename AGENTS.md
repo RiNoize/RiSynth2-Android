@@ -539,7 +539,7 @@ original AU; keeps both renders for listening).
 - Sustain pedal CC 64 (>= 64 down): released keys held (arp keys too)
   until pedal up; CC 120 / 123 clear held keys. Not measured.
 - LFO: global, free-running from instance creation; types 0 saw↓ 1 tri
-  (-1 at 0) 2 square (+ first) 3 S&H 4 smooth 5 sine; Hz = 0.084·2^(s/12.05);
+  (-1 at 0) 2 square (+ first) 3 S&H 4 smooth 5 sine; Hz = 2^(s/12.0367)/12 (`measure_lfo_speed.py`, 0.02 %);
   dests 1 osc2 pitch 2 osc1+2 pitch 3 cutoff 4 amp 5 pw 6 FM 7 pan.
   Tempo sync: 30 steps, step = floor(s·30/128), cycle = `Lfo::kSyncBeats`
   16 bars (s 0) .. 1/64T (127) = Synth1's display list; NO host-beat phase
@@ -655,8 +655,8 @@ original AU; keeps both renders for listening).
   + fx combos; isolated: sync + FM 64 + osc2 PULSE is ~20 dB too loud at
   keys 36 / 48, fine without sync or with a triangle), patch0010 (LPDL + smooth random LFO). A resonant LP24
   pulled shut by a strongly negative env with a slow attack stays louder
-  in the original. PW law gap: full-ish LFO / mod env depth lands ~1.5 /
-  254 short near the extremes.
+  in the original. PW: within ~1 / 254 of the original (the old 1.5 / 254
+  gap was mostly the LFO speed law).
 - iPad AUv3: built and harness-tested, device testing / App Store release
   pending.
 - Patch loads are one VST3 group edit (`SynthEditorCore::GroupEdit`: one
