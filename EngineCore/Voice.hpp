@@ -34,6 +34,7 @@ struct Rng {
 inline constexpr double kOscAmplitude = 0.2;  // (measured) sine/saw/tri peak at gain 64, vel 127
 inline constexpr double kNoiseAmplitude = 1.1265; // (measured) uniform white, rms 0.508 FS after the post lowpass
 inline constexpr int kDetuneOscs = 8;
+inline constexpr double kRingDetuneLimit = 1.7; // (fitted) ring + osc1 detune + sub: osc1 section limiter
 inline constexpr double kDetuneOffsets[kDetuneOscs] = {-7, -5, -3, -1, 1, 3, 5, 7}; // x d cents (measured)
 
 inline double NoteHz(double note) { return 440.0 * std::exp2((note - 69.0) / 12.0); }
@@ -175,6 +176,9 @@ public:
         const double subGainKnob = p[kSubGain];
         const double subW = subGainKnob / (subGainKnob + 32.0), mainW = 1.0 - subW; // (measured) auto level
         const bool subOn = p[kSubGain] > 0;
+        // (measured, measure_osc_mix.py) with the sub on, osc2 also takes the
+        // main weight: osc1 (1-w)(1-m), sub w(1-m), osc2 (1-w)m, over 1 - wm
+        const double mixNorm = 1.0 / (1.0 - mix2 * subW), mixA = mix1 * mixNorm, mixB = mix2 * mainW * mixNorm;
         const int subShape = p[kSubShape];
         const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
         const bool detuneOn = p[kOsc1Detune] > 0;
@@ -305,10 +309,15 @@ public:
                     subDetunePhase_[d] = Wrap(subDetunePhase_[d] + incA * subRatio * detuneRatio[d] * fm);
                 }
                 o1 = acc * detuneGain;
-                sub = subAcc * detuneGain;
+                // (measured, measure_ring_detune.py) ring on: the sub copies
+                // skip the copy gain (~+10 dB), see the limiter below
+                sub = ring ? subAcc : subAcc * detuneGain;
             }
             if (osc1Silent) o1 = sub = 0;
-            const double osc1Out = subOn ? mainW * o1 + subW * sub : o1;
+            double osc1Out = subOn ? mainW * o1 + subW * sub : o1;
+            // TODO(measure): the original bounds that loud sum; a tanh at 1.7
+            // fits to -15..-22 dB (it also has some osc1 x sub products)
+            if (ring && detuneOn && subOn) osc1Out = kRingDetuneLimit * std::tanh(osc1Out / kRingDetuneLimit);
             if (ring) o2 *= o1;
 
             osc1Phase_ += incA * fm;
@@ -327,7 +336,7 @@ public:
                 osc2Phase_ = Wrap(osc2Phase_ + incB);
             }
 
-            const double mixed = mix1 * osc1Out + mix2 * o2;
+            const double mixed = mixA * osc1Out + mixB * o2;
             // ---- filter -> saturation -> amp (measured order) ----
             const double base = cutoffBase + cutoffStep * i, low = base - 2.1;
             double cutoff = low + (std::clamp(base + envDepth, -2.0, 125.0) - low) * filterEnv_.Next();

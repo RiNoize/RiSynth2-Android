@@ -436,12 +436,17 @@ original AU; keeps both renders for listening).
   free); osc silent when its note index > 127. Fundamentals of all shapes in
   phase (saw falling +1 at phase 0, tri peak at 0.25). osc1 shapes 0 sine 1
   saw 2 pulse 3 tri; osc2 1 saw 2 pulse 3 tri 4 noise; sub 0 sine 1 tri 2 saw
-  3 square, sub phase-locked to osc1, auto level w = g/(g+32). Mix linear.
+  3 square, sub phase-locked to osc1, auto level w = g/(g+32). Mix
+  (`measure_osc_mix.py`, m = mix/127): osc1 (1-w)(1-m), sub w(1-m), osc2
+  (1-w)m, all / (1-wm) (sub off = linear crossfade).
   osc2 pitch = integer-semitone table (±60), fine/tune 1 cent/step dead zone
   62..66. kbd track off = fixed 220 Hz. Osc1 detune: main + 8 copies at
   ±1,3,5,7 × d cents, d = 20 v/127, each ×0.297 (sine 0.288).
   FM: inst f1 = f1 (1 + beta[v] osc2_norm) (table, to ~102). Ring: osc2 ×
-  osc1_norm. Sync hard: NAIVE reset of osc2 to phase 0 (same alias energy
+  osc1_norm. Ring BUG kept on purpose (`measure_ring_detune.py`): ring +
+  osc1 detune + sub on = the sub copies skip the 0.297 gain, then the osc1
+  section is bounded (modelled 1.7·tanh(x/1.7), approximate; the original
+  also has osc1 × sub products); no effect without detune. Sync hard: NAIVE reset of osc2 to phase 0 (same alias energy
   as the original to 0.1 dB; do not band-limit). Synced noise: the original
   restarts its noise generator from a fixed state at every osc1 wrap
   (pitched).
