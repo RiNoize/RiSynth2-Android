@@ -583,3 +583,26 @@ OXO_TEST(ClearDelayFadesOutEchoes) {
     s.Render(l.data(), r.data(), 4800);
     OXO_EXPECT(peak(l, 0, 4800) > 0.01f); // echoes again
 }
+
+// Hosts with blocks shorter than 256 samples (AUM at 64 / 128, odd sizes):
+// a released voice must still end (it never did, the grid restarted with
+// every block).
+OXO_TEST(ReleasedVoicesEndWithShortHostBlocks) {
+    for (int block : {64, 128, 200, 256, 441, 512}) {
+        Synth s;
+        s.SetSampleRate(44100);
+        s.SetParam(kAmpRelease, 0);
+        s.NoteOn(60, 100);
+        std::vector<float> l(static_cast<size_t>(block)), r(static_cast<size_t>(block));
+        const auto render = [&](int frames) {
+            for (int done = 0; done < frames; done += block) {
+                s.BeginBlock(block);
+                s.Render(l.data(), r.data(), block);
+            }
+        };
+        render(4410);
+        s.NoteOff(60);
+        render(44100);
+        OXO_EXPECT_EQ(s.VoiceStates(), uint64_t(0));
+    }
+}

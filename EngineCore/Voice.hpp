@@ -141,7 +141,8 @@ public:
     void ClearFilters() { filter_.Reset(); }
 
     // (measured, measure_noise.py) a released voice ends at the first
-    // 256-sample block boundary after its envelope fell silent (-66 dB).
+    // 256-sample block boundary after its envelope fell silent (-66 dB), or
+    // at the host block's end when that comes first (blocks < 256 samples).
     bool Active() const { return amp_.Active() || tail_; }
     bool Gate() const { return gate_; }
     int Note() const { return note_; }
@@ -150,9 +151,10 @@ public:
     // lfo[k] = LFO k's per-sample value (nullptr when that LFO is off).
     // cutoffKnob / cutoffStep: the smoothed cutoff knob at the block start and
     // its per-sample ramp (Synth's 50 ms glide, measured).
-    // pos: the chunk's first sample in the engine's sample count.
-    void Render(float *left, float *right, int frames, int64_t pos, const PatchValues &p, double bendSemis,
-                const double *const lfo[2], double cutoffKnob, double cutoffStep) {
+    // pos: the chunk's first sample in the host block; blockEnd: the host
+    // block's length.
+    void Render(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
+                double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         if (!Active()) return;
         if (p[kPortaTime] <= 0) glide_ = note_;
         // (measured, measure_porta.py) a glide moves every 16 samples
@@ -160,7 +162,7 @@ public:
             const bool gliding = glide_ != note_;
             const int n = gliding ? std::min(frames - off, glideTick_) : frames - off;
             const double *at[2] = {lfo[0] ? lfo[0] + off : nullptr, lfo[1] ? lfo[1] + off : nullptr};
-            RenderChunk(left + off, right + off, n, pos + off, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
+            RenderChunk(left + off, right + off, n, pos + off, blockEnd, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
             off += n;
             if (gliding && (glideTick_ -= n) == 0) {
                 glideTick_ = 16;
@@ -173,8 +175,8 @@ public:
     }
 
 private:
-    void RenderChunk(float *left, float *right, int frames, int64_t pos, const PatchValues &p, double bendSemis,
-                     const double *const lfo[2], double cutoffKnob, double cutoffStep) {
+    void RenderChunk(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
+                     double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         // ---- LFO routing (measured depth laws per destination). Both LFOs on
         // one destination (measured, measure_lfo_sum.py): pitch = sum of each
         // LFO's cents; cutoff / FM / pw / pan = the law applied to the
@@ -416,7 +418,7 @@ private:
             }
             left[i] += float(y * gl);
             right[i] += float(y * gr);
-            if (!amp_.Active() && ((pos + i + 1) & 255) == 0) {
+            if (!amp_.Active() && (((pos + i + 1) & 255) == 0 || pos + i + 1 >= blockEnd)) {
                 tail_ = false;
                 break;
             }

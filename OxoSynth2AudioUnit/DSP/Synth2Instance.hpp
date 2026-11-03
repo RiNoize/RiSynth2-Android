@@ -157,7 +157,7 @@ public:
         }
     }
 
-    void BeginBlock() { synth_.BeginBlock(); }
+    void BeginBlock(uint32_t frames) { synth_.BeginBlock(int(frames)); }
     void Render(float *left, float *right, int frames) {
         synth_.Render(left, right, frames);
         voices_.store(synth_.VoiceStates(), std::memory_order_relaxed);

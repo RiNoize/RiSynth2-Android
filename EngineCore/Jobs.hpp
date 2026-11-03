@@ -112,7 +112,7 @@ inline void RenderJob(const Job &job, std::vector<float> &left, std::vector<floa
     for (size_t pre = size_t(job.preroll * job.sampleRate); pre > 0;) {
         int n = int(std::min<size_t>(pre, kBlock));
         transport();
-        synth.BeginBlock();
+        synth.BeginBlock(n);
         synth.Render(scratchL.data(), scratchR.data(), n);
         samplePos += n;
         pre -= size_t(n);
@@ -126,7 +126,7 @@ inline void RenderJob(const Job &job, std::vector<float> &left, std::vector<floa
     size_t pos = 0, ev = 0;
     while (pos < total) {
         const size_t block = pos, end = std::min(total, pos + kBlock);
-        synth.BeginBlock();
+        synth.BeginBlock(int(end - block));
         while (ev < events.size()) {
             size_t at = size_t(std::llround(events[ev].time * job.sampleRate));
             if (at >= end) break;

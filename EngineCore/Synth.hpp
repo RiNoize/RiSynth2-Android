@@ -430,7 +430,7 @@ public:
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
             for (Voice &v : voices_)
-                v.Render(left + pos, right + pos, n, blockPos_ + pos, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+                v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, cutoffStart, cutoffStep);
             if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
             toArp = ArpAdvance(n);
         }
@@ -454,9 +454,13 @@ public:
         blockPos_ += std::max(frames, 0);
     }
 
-    // A host block starts (before its first Render): the original's voice
-    // end grid (256 samples) counts from there, like NoteEventOffset.
-    void BeginBlock() { blockPos_ = 0; }
+    // A host block of `frames` samples starts (before its first Render): the
+    // original's voice end grid (256 samples) counts from there, like
+    // NoteEventOffset, and also ends at the block's end.
+    void BeginBlock(int frames) {
+        blockPos_ = 0;
+        blockEnd_ = std::max(frames, 1);
+    }
 
     // Master volume (kVolumeParamId, not a patch parameter): survives Reset.
     void SetVolume(int32_t v) { volumeTarget_ = VolumeGain(ClampValue(kVolumeParamId, v)); }
@@ -605,6 +609,7 @@ private:
     double arpAccum_ = 0;
     uint64_t now_ = 0; // samples rendered: a voice's age = its start time
     int64_t blockPos_ = 0; // samples since BeginBlock
+    int64_t blockEnd_ = INT64_MAX; // the host block's length (none: tools rendering without BeginBlock)
     enum class Switch { None, Out, Hold, In } switch_ = Switch::None; // patch switch fade
     double switchX_ = 1;
     int64_t switchQuiet_ = 0, switchHeld_ = 0;

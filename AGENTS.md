@@ -525,7 +525,10 @@ original AU; keeps both renders for listening).
   (`measure_env_tail.py`: the tail falls faster than a pure exponential,
   -60 dB ~7 % earlier; a decay to sustain 0 = silent but still held), the
   release end = the env end, the voice at the first
-  256-sample boundary after (host block relative, `Synth::BeginBlock`).
+  256-sample boundary after (host block relative, `Synth::BeginBlock(frames)`)
+  or the host block's end if sooner (NOT measured: blocks < 256, e.g. AUM
+  at 64 / 128, never reached a boundary and voices never ended — stuck
+  grid + CPU on iPad; assumed: the original's 256 chunks stop at the block end).
   The original then leaves a -108 dB residue for 8960 samples (not
   modelled).
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
