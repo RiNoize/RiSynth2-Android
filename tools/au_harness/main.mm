@@ -28,10 +28,10 @@ int main() {
     ev[1].MIDI = {nullptr, 200, AURenderEventMIDI, 0, 3, 0, {0xB0, 74, 127}};
     ev[0].MIDI.next = &ev[1];
     Synth2Render(inst, 512, abl, ev, 0, 120, 0, 0);
-    float pre = 0, post = 0;
-    for (int i = 0; i < 100; ++i) pre = std::max(pre, std::fabs(L[i]));
-    for (int i = 100; i < 512; ++i) post = std::max(post, std::fabs(L[i]));
-    expect(pre == 0 && post > 0.01f, "note sounds from its offset");
+    float pre = 0, post = 0; // notes snap to the original's 16-sample grid: 100 -> 96
+    for (int i = 0; i < 96; ++i) pre = std::max(pre, std::fabs(L[i]));
+    for (int i = 96; i < 512; ++i) post = std::max(post, std::fabs(L[i]));
+    expect(pre == 0 && post > 0.01f, "note sounds from its grid offset");
     expect(Synth2GetParam(inst, 19) == 127, "learned CC drives filter freq");
     expect((h.lastCC(h.ctx) & 0x7F) == 74, "last CC token");
     expect(h.voiceStates(h.ctx) == 2, "voice 0 held");
