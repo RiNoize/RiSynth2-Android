@@ -456,7 +456,8 @@ original AU; keeps both renders for listening).
   section is bounded (modelled 1.7·tanh(x/1.7), approximate; the original
   also has osc1 × sub products); no effect without detune. Sync hard: NAIVE reset of osc2 to phase 0 (same alias energy
   as the original to 0.1 dB; do not band-limit).
-- Fixed output lowpass: bilinear one-pole, analog 22 kHz, NO prewarp.
+- The "fixed output lowpass" (bilinear one-pole, analog 22 kHz, NO
+  prewarp) is NOT per voice: it is the EQ TONE stage at 64 (see EQ).
 - Amp env: linear attack 0.5 ms·2^(v/8.05); decay/release exponential
   tau table (same law); sustain = curved table. Filter env = same times,
   LINEAR sustain. Velocity: dB = -15 (sens/64)(127-vel)/126.
@@ -585,13 +586,21 @@ original AU; keeps both renders for listening).
 - Pan: patch pan q = (v-64)/64 below the centre, /63 above; balance gains
   (centre 1/1, hard side 1/0); patch pan × unison spread gains MULTIPLY.
 - Delay: spread = one side later by 100 ms·10^((|v-64|-63)/21) (0 at 64);
-  delay / EQ tone share one law (LP 190 Hz·2^(t/8.7) below 64, HP above).
+  delay tone (`measure_delay_tone.py`, `kDelayToneHz`): a bilinear one-pole
+  in the echo path, 64 = none, < 64 LP 200 Hz·110^(t/63) (22 kHz at 63),
+  > 64 HP 10 Hz .. 8 kHz.
   Arp gate 0 = silent.
 - Chain order (`measure_fx_order.py`): voices → effect → EQ → delay →
   chorus.
-- EQ (`measure_eq.py`): peak f0 = 50·320^(freq/127), (level−64)·50/127 dB,
-  analog-matched Zolzer peak, Q 3.18·2^((q−64)/38.16), cut = inverse of
-  the boost.
+- EQ (`check_eq.py`: every tone / freq / level / Q case within 0.06 dB):
+  TONE (`measure_eq_tone.py`, `kEqToneHz`) = one bilinear one-pole, no
+  prewarp, ALWAYS on: ≤ 64 LP 200 Hz·110^(t/64) (64 = 22 kHz, the output
+  lowpass), > 64 HP 11 Hz .. 7.2 kHz with no lowpass left (tone 65 is ~4
+  dB brighter at 16 kHz than 64). PEAK (`measure_eq.py`): f0 =
+  50·320^(freq/127), (level−64)·50/127 dB, analog prototype Q
+  3.18·2^((q−64)/38.16) (cut = inverse of the boost), poles AND zeros by
+  impulse invariance, gain set at f0 (a boost near the top loses up to 3
+  dB at DC).
 - CHORUS (`measure_chorus.py`): per-channel lines, voice delay = base·(1 +
   D·sin(ωt − θ)), D = (100^(depth/127) − 1)/99, one sine LFO free-running
   from creation, 2.94 Hz·2^((rate−64)/8.89), rate 0 = 0.01 Hz; types 1–3
@@ -640,11 +649,11 @@ original AU; keeps both renders for listening).
 
 ## Status and open items
 
-- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.01
-  dB, spec 2.55 dB, env 3.01 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.00
+  dB, spec 2.40 dB, env 3.01 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
-  arp random sequence (+ S&H / smooth LFO: not the original's PRNG), EQ
-  above 8 kHz, LPDL resonance frequency near the top cutoffs.
+  arp random sequence (+ S&H / smooth LFO: not the original's PRNG), LPDL
+  resonance frequency near the top cutoffs.
 - Random sequences (arp random, S&H / smooth LFO): not identified. Leads:
   S&H read through LFO -> pitch is quantized by PitchMod (useless), through
   LFO -> amp it sits on a 1/1024 grid; the two destinations gave

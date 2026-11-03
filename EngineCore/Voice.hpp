@@ -52,9 +52,6 @@ public:
         sampleRate_ = sampleRate;
         tables_ = WaveTableSet::ForSampleRate(sampleRate);
         filter_.Prepare(sampleRate);
-        const double k = M_PI * 22000.0 / sampleRate; // (measured) post lowpass
-        postA_ = k / (1 + k);
-        postB_ = (1 - k) / (1 + k);
     }
 
     // (measured, measure_slot_phase.py) with osc phase 0 the original never
@@ -92,10 +89,7 @@ public:
         tail_ = false;
         // A stolen voice still sounding keeps its filter / output state:
         // zeroing them under a live signal clicks (the original doesn't).
-        if (!stolen) {
-            postZ_ = postY_ = 0;
-            filter_.Reset();
-        }
+        if (!stolen) filter_.Reset();
     }
 
     // Oscillator start phases (Start; a mono retrigger restarts them too).
@@ -143,11 +137,8 @@ public:
         amp_.Reset();
         tail_ = false;
     }
-    // Filter / output state cleared (a patch switch, at silence).
-    void ClearFilters() {
-        filter_.Reset();
-        postZ_ = postY_ = 0;
-    }
+    // Filter state cleared (a patch switch, at silence).
+    void ClearFilters() { filter_.Reset(); }
 
     // (measured, measure_noise.py) a released voice ends at the first
     // 256-sample block boundary after its envelope fell silent (-66 dB).
@@ -415,10 +406,7 @@ private:
             double gainMod = 1.0;
             for (int k = 0; k < r[4].n; ++k) gainMod *= 1.0 - r[4].depth[k] / 127.0 * 0.5 * (1.0 - r[4].v[k][i]);
             const double x = filtered * env * ampGain * gainMod;
-            // ---- post lowpass ----
-            const double y = postA_ * (x + postZ_) + postB_ * postY_;
-            postZ_ = x;
-            postY_ = y;
+            const double y = x; // (the original's 22 kHz output lowpass = the EQ tone stage)
             double gl = panL, gr = panR;
             if (r[7]) {
                 const double s = r[7].Signed(i); // + = left; unclamped (measured: 127 + 127 -> gains 2 / -1)
@@ -484,7 +472,6 @@ private:
     std::array<double, kDetuneOscs> detunePhase_{}, subDetunePhase_{};
     uint32_t noise_ = kNoiseSeed;
     bool tail_ = false; // envelope done, running silent to the block boundary
-    double postA_ = 1, postB_ = 0, postZ_ = 0, postY_ = 0;
 };
 
 } // namespace oxo::s2

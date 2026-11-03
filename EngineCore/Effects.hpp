@@ -6,8 +6,9 @@
 // fb / 127 per repeat, dry/wet crossfade (64 = both at unity), spread
 // delays ONE side by up to +100 ms (< 64 right, > 64 left, exponential), types 0 ST
 // (independent), 1 X (cross feedback), 2 PP (ping-pong, input -> left).
-// Tone: 64 neutral, below = one-pole LP in the echo path (~190 Hz at 0),
-// above = one-pole HP (~7 kHz at 127).
+// Tone (measured, measure_delay_tone.py): a bilinear one-pole in the echo
+// path, 64 = no filter, below = lowpass (200 Hz .. 22 kHz at 63), above =
+// highpass (10 Hz .. 8 kHz): kDelayToneHz.
 //
 // Chorus: measured, see the class comment.
 
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <vector>
 
 namespace oxo::s2 {
@@ -24,22 +26,30 @@ inline constexpr double kDelayBeats[20] = {0.0013, 1.0 / 24, 1.0 / 12, 1.0 / 8, 
                                            0.375,  0.5,      2.0 / 3,  0.75,    0.875,   1.0,  4.0 / 3,
                                            1.5,    1.75,     2.0,      3.0,     3.5,     4.0};
 
-class OnePole {
+// Bilinear one-pole (analog cutoff, NO prewarp): the EQ / delay tone
+// (measured, measure_eq_tone.py, kEqToneHz).
+class BilinearOnePole {
 public:
-    void SetLowpass(double hz, double sr) { lp_ = true, Coef(hz, sr); }
-    void SetHighpass(double hz, double sr) { lp_ = false, Coef(hz, sr); }
-    void SetBypass() { a_ = -1; }
-    double Process(double x) {
-        if (a_ < 0) return x;
-        y_ += a_ * (x - y_);
-        return lp_ ? y_ : x - y_;
+    void Set(double hz, bool highpass, double sr) {
+        const double k = M_PI * hz / sr;
+        hp_ = highpass;
+        bypass_ = false;
+        g_ = (highpass ? 1.0 : k) / (1 + k);
+        b_ = (1 - k) / (1 + k);
     }
-    void Reset() { y_ = 0; }
+    void SetBypass() { bypass_ = true; }
+    double Process(double x) {
+        if (bypass_) return x;
+        const double y = g_ * (hp_ ? x - x1_ : x + x1_) + b_ * y1_;
+        x1_ = x;
+        y1_ = y;
+        return y;
+    }
+    void Reset() { x1_ = y1_ = 0; }
 
 private:
-    void Coef(double hz, double sr) { a_ = 1.0 - std::exp(-2.0 * M_PI * std::min(hz, sr * 0.45) / sr); }
-    bool lp_ = true;
-    double a_ = -1, y_ = 0;
+    bool hp_ = false, bypass_ = false;
+    double g_ = 1, b_ = 0, x1_ = 0, y1_ = 0;
 };
 
 class TempoDelay {
@@ -89,9 +99,8 @@ public:
         const int type = p[kDelayType];
         const int t = p[kDelayTone];
         for (auto &f : tone_) {
-            if (t < 64) f.SetLowpass(190.0 * std::exp2(t / 8.7), sr_);
-            else if (t > 64) f.SetHighpass(280.0 * std::exp2((t - 96) / 6.7), sr_);
-            else f.SetBypass();
+            if (t == 64) f.SetBypass();
+            else f.Set(tables::kDelayToneHz[std::clamp(t, 0, 127)], t > 64, sr_);
         }
         const size_t size = buf_[0].size();
         const double fadeStep = 1.0 / fadeLen_;
@@ -152,7 +161,7 @@ private:
     double smoothL_ = -1, smoothR_ = -1;
     int fadeLen_ = 1, fadeOut_ = 0;
     double inGain_ = 1;
-    OnePole tone_[2];
+    BilinearOnePole tone_[2];
 };
 
 // Chorus (measured, measure_chorus.py: identical-noise IRs + sine phase
@@ -270,20 +279,24 @@ namespace oxo::s2 {
 // Digital Filters", 2016: no bilinear cramping near Nyquist), stereo.
 class PeakEq {
 public:
-    void Set(double hz, double q, double gain, double sr) {
-        const double w0 = 2 * M_PI * std::min(hz, sr * 0.49) / sr, zeta = 1 / (2 * q);
-        const double e = std::exp(-zeta * w0);
-        a1_ = zeta <= 1 ? -2 * e * std::cos(std::sqrt(1 - zeta * zeta) * w0)
-                        : -2 * e * std::cosh(std::sqrt(zeta * zeta - 1) * w0);
-        a2_ = e * e;
-        const double A0 = (1 + a1_ + a2_) * (1 + a1_ + a2_), A1 = (1 - a1_ + a2_) * (1 - a1_ + a2_), A2 = -4 * a2_;
-        const double p1 = std::sin(w0 / 2) * std::sin(w0 / 2), p0 = 1 - p1, p2 = 4 * p0 * p1, g2 = gain * gain;
-        const double R1 = (A0 * p0 + A1 * p1 + A2 * p2) * g2, R2 = (-A0 + A1 + 4 * (p0 - p1) * A2) * g2;
-        const double B0 = A0, B2 = (R1 - R2 * p1 - B0) / (4 * p1 * p1), B1 = R2 + B0 + 4 * (p1 - p0) * B2;
-        const double W = 0.5 * (std::sqrt(B0) + std::sqrt(std::max(B1, 0.0)));
-        b0_ = 0.5 * (W + std::sqrt(std::max(W * W + B2, 0.0)));
-        b1_ = 0.5 * (std::sqrt(B0) - std::sqrt(std::max(B1, 0.0)));
-        b2_ = -B2 / (4 * b0_);
+    // poleQ: the poles' Q; the zeros' Q = poleQ / gain (gain at f0 = gain).
+    // (measured, measure_eq.py) poles AND zeros mapped by impulse invariance
+    // (z = exp(s T) per root pair), the gain set at f0: the original's DC gain
+    // falls below 1 for a boost near the top (-2.3 dB at 16 kHz).
+    void Set(double hz, double poleQ, double gain, double sr) {
+        const double w0 = 2 * M_PI * std::min(hz, sr * 0.49) / sr;
+        const auto pair = [w0](double q, double &c1, double &c2) {
+            const double zeta = 1 / (2 * q), e = std::exp(-zeta * w0);
+            c1 = zeta <= 1 ? -2 * e * std::cos(std::sqrt(1 - zeta * zeta) * w0)
+                           : -2 * e * std::cosh(std::sqrt(zeta * zeta - 1) * w0);
+            c2 = e * e;
+        };
+        double z1, z2;
+        pair(poleQ, a1_, a2_);
+        pair(poleQ / gain, z1, z2);
+        const std::complex<double> u = std::polar(1.0, -w0);
+        const double k = gain * std::abs(1.0 + a1_ * u + a2_ * u * u) / std::abs(1.0 + z1 * u + z2 * u * u);
+        b0_ = k, b1_ = k * z1, b2_ = k * z2;
     }
     double Process(int ch, double x) {
         double *z = z_[ch];
@@ -298,16 +311,16 @@ private:
     double b0_ = 1, b1_ = 0, b2_ = 0, a1_ = 0, a2_ = 0, z_[2][2] = {{0, 0}, {0, 0}};
 };
 
-// Equalizer. Peak (measured, measure_eq.py, reference/meta/eq.json; within
-// 0.05 dB below 8 kHz): f0 = 50 Hz * 320^(freq / 127) (the v1.12 manual's
-// 50 Hz..16 kHz), gain (level - 64) * 50 / 127 dB (-25.2..+24.8), analog
-// prototype with the poles' Q = 3.18 * 2^((q - 64) / 38.16) for a boost and
-// that Q * G for a cut (= the exact inverse of the boost: Zolzer-style
-// symmetric peak). TODO(measure): above 8 kHz the original's response
-// deviates (DC gain < 1 for a boost, mirrored for a cut; 0.4 dB rms at
-// freq 112, 3 dB at 127 full gain), structure not identified. Tone 64
-// neutral, below = one-pole LP (190 Hz at 0), above = one-pole HP (same law
-// as the delay tone).
+// Equalizer. Peak (measured, measure_eq.py / check_eq.py, within 0.1 dB at
+// every knob): f0 = 50 Hz * 320^(freq / 127) (the v1.12 manual's 50 Hz..16
+// kHz), gain (level - 64) * 50 / 127 dB (-25.2..+24.8), analog prototype with
+// the poles' Q = 3.18 * 2^((q - 64) / 38.16) for a boost and that Q * G for a
+// cut (= the exact inverse of the boost), discretized by impulse invariance
+// (PeakEq).
+// Tone (measured, measure_eq_tone.py): ONE bilinear one-pole (analog cutoff
+// kEqToneHz, no prewarp), always on: <= 64 a lowpass (64 = 22 kHz: the
+// original's "fixed output lowpass" is this stage), > 64 a highpass (no
+// lowpass left).
 class Equalizer {
 public:
     void Prepare(double sr) { sr_ = sr; }
@@ -317,17 +330,12 @@ public:
         tone_[1].Reset();
     }
     void Process(float *l, float *r, int n, const PatchValues &p) {
-        const bool peakOn = p[kEqLevel] != 64, toneOn = p[kEqTone] != 64;
-        if (!peakOn && !toneOn) return;
+        const bool peakOn = p[kEqLevel] != 64;
         const double gain = std::pow(10.0, (p[kEqLevel] - 64) * 50.0 / 127.0 / 20.0);
         const double q = 3.18 * std::exp2((p[kEqQ] - 64) / 38.16);
         peak_.Set(50.0 * std::pow(320.0, p[kEqFreq] / 127.0), gain < 1 ? q * gain : q, gain, sr_);
-        const int t = p[kEqTone];
-        for (auto &f : tone_) {
-            if (t < 64) f.SetLowpass(190.0 * std::exp2(t / 8.7), sr_);
-            else if (t > 64) f.SetHighpass(280.0 * std::exp2((t - 96) / 6.7), sr_);
-            else f.SetBypass();
-        }
+        const int t = std::clamp(p[kEqTone], 0, 127);
+        for (auto &f : tone_) f.Set(tables::kEqToneHz[t], t > 64, sr_);
         for (int i = 0; i < n; ++i) {
             double a = l[i], b = r[i];
             if (peakOn) a = peak_.Process(0, a), b = peak_.Process(1, b);
@@ -339,7 +347,7 @@ public:
 private:
     double sr_ = 44100;
     PeakEq peak_;
-    OnePole tone_[2];
+    BilinearOnePole tone_[2];
 };
 
 // RBJ biquad (bilinear, prewarped), stereo state.
