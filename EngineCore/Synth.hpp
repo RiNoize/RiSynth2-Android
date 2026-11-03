@@ -181,12 +181,17 @@ private:
         // (free) the original behaves as v = 127.
         static constexpr double kPhaseDeg[8] = {0, 62.2, 356.4, 60.5, 317.0, 281.5, 136.3, 303.1};
         const double shift = (values_[kOscPhase] == 0 ? 127 : values_[kUnisonPhase]) / 127.0 / 360.0;
+        // (measured, measure_unison_phase.py) but with osc phase 0 the osc1
+        // detune copies of each stacked voice start at unrelated phases (a
+        // coherent stack sums up to +12 dB louder and phases).
+        Rng copies{shared.state * 0x9E3779B1u}; // odd factor: never 0
         for (int i = 0; i < n; ++i) {
-            rng_ = shared;
+            Rng voice = shared;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
-            AllocateVoice().Start(key, velocity, values_, rng_, age, t * d, t * spread,
-                                  (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[i] * shift);
+            AllocateVoice().Start(key, velocity, values_, voice, age, t * d, t * spread,
+                                  (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[i] * shift, &copies);
         }
+        rng_ = copies;
     }
 
     void RemoveHeld(int key) {

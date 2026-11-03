@@ -52,9 +52,10 @@ public:
     }
 
     // detuneCents / pan (-1..1) / pitchSemis / phase (cycles): this voice's
-    // place in a unison stack.
+    // place in a unison stack; copyRng (if set) draws the free detune copy
+    // phases instead of rng.
     void Start(int note, int velocity, const PatchValues &p, Rng &rng, uint64_t age, double detuneCents = 0,
-               double pan = 0, double pitchSemis = 0, double unisonPhase = 0) {
+               double pan = 0, double pitchSemis = 0, double unisonPhase = 0, Rng *copyRng = nullptr) {
         unisonSemis_ = detuneCents / 100.0 + pitchSemis;
         unisonPan_ = pan;
         note_ = note;
@@ -87,7 +88,7 @@ public:
         const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
         subPhase_ = osc1Phase_ * subRatio;
         for (int i = 0; i < kDetuneOscs; ++i) {
-            detunePhase_[i] = rng.Unit();
+            detunePhase_[i] = (copyRng ? *copyRng : rng).Unit();
             // (measured) with osc phase > 0 copy i starts kCopyPhaseDeg[i] * (v - 1) / 126 after osc1
             static constexpr double kCopyPhaseDeg[kDetuneOscs] = {321, 172, 291, 202, 0, 69, 210, 126};
             if (p[kOscPhase] > 0) detunePhase_[i] = Wrap(osc1Phase_ + kCopyPhaseDeg[i] / 360.0 * (p[kOscPhase] - 1) / 126.0);

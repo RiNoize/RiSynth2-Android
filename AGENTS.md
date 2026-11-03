@@ -529,7 +529,9 @@ original AU; keeps both renders for listening).
   FM-knob units with m·g: g = env during the attack, during the DECAY g = 1
   + ln(env)/ln(1e4) (FM offset falls LINEARLY to 0 at 9.2 taus).
 - Unison: voices start phase-coherent, spread evenly ±D (table), odd
-  voices + (pitch-24) semis, no level compensation. Portamento, pan
+  voices + (pitch-24) semis, no level compensation. EXCEPT with osc phase 0
+  the osc1 detune copies of each stacked voice start at unrelated phases
+  (`measure_unison_phase.py`; coherent copies = up to +12 dB and phasing). Portamento, pan
   measured (tables).
 - Delay: spread = one side later by 100 ms·10^((|v-64|-63)/21) (0 at 64);
   delay / EQ tone share one law (LP 190 Hz·2^(t/8.7) below 64, HP above).
@@ -585,8 +587,8 @@ original AU; keeps both renders for listening).
 
 ## Status and open items
 
-- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.56
-  dB, spec 3.41 dB, env 3.74 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.32
+  dB, spec 2.99 dB, env 3.54 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
   arp random sequence (+ S&H / smooth LFO / noise sequences: not the
   original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top

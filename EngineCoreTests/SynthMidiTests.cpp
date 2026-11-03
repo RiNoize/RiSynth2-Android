@@ -108,6 +108,35 @@ OXO_TEST(VoicesRoundRobin) {
     }
 }
 
+// (measured) with osc phase 0 the osc1 detune copies of a unison stack start
+// at unrelated phases: 8 voices add ~8x the power of one (coherent copies:
+// ~58x, the old bug).
+OXO_TEST(UnisonDetuneCopiesAreIncoherent) {
+    const auto power = [](bool unison) {
+        Synth s;
+        s.SetSampleRate(48000);
+        s.SetParam(kOsc1Shape, 0);
+        s.SetParam(kOsc1Detune, 127);
+        s.SetParam(kAmpRelease, 0);
+        s.SetParam(kUnisonOn, unison);
+        s.SetParam(kUnisonVoices, 8);
+        s.SetParam(kUnisonDetune, 0);
+        s.SetParam(kUnisonPan, 64);
+        std::vector<float> l(48000), r(48000);
+        double sum = 0;
+        for (int n = 0; n < 8; ++n) {
+            s.NoteOn(69, 127);
+            s.Render(l.data(), r.data(), 48000);
+            for (float x : l) sum += double(x) * x;
+            s.NoteOff(69);
+            Run(s, 4800);
+        }
+        return sum;
+    };
+    const double ratio = power(true) / power(false);
+    OXO_EXPECT(ratio > 4 && ratio < 20);
+}
+
 // Master volume: Synth1's measured vol law, not a patch parameter.
 OXO_TEST(MasterVolumeScalesOutput) {
     const auto peak = [](int volume) {
