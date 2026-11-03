@@ -640,23 +640,31 @@ original AU; keeps both renders for listening).
 
 ## Status and open items
 
-- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.11
-  dB, spec 2.70 dB, env 3.16 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.01
+  dB, spec 2.55 dB, env 3.01 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
   arp random sequence (+ S&H / smooth LFO: not the original's PRNG), EQ
-  above 8 kHz, LPDL resonance frequency near the top
-  cutoffs.
+  above 8 kHz, LPDL resonance frequency near the top cutoffs.
+- Random sequences (arp random, S&H / smooth LFO): not identified. Leads:
+  S&H read through LFO -> pitch is quantized by PitchMod (useless), through
+  LFO -> amp it sits on a 1/1024 grid; the two destinations gave
+  DIFFERENT sequences from fresh processes (unexplained); not mac rand(),
+  not common 32-bit LCGs, not windows of the noise LFSR. Presets using
+  them (patch0368: random arp) move in the scores whenever our RNG draw
+  order changes.
 - Portamento: glides of 2+ octaves land ~30 ms earlier than the
-  original's (the last steps; mid-glide matches).
-- Random sequences (arp random, S&H / smooth LFO) are not the
-  original's PRNG: presets using them (patch0368: random arp) move in the
-  scores whenever our RNG draw order changes.
+  original's (the last steps; mid-glide matches). Decay knobs > 88 run
+  ~0.5-1 % fast (a release then ends one 256-sample block early).
 - Worst presets: patch0106 (+21 dB), patch0025, patch0163 (sync + FM + arp
-  + fx combos; isolated: sync + FM 64 + osc2 PULSE is ~20 dB too loud at
-  keys 36 / 48, fine without sync or with a triangle), patch0010 (LPDL + smooth random LFO). A resonant LP24
-  pulled shut by a strongly negative env with a slow attack stays louder
-  in the original. PW: within ~1 / 254 of the original (the old 1.5 / 254
-  gap was mostly the LFO speed law).
+  + fx combos). Isolated: sync + osc1 FM with osc2 pulse is chaotic (osc2
+  resets steer osc1 through the FM): at key 36 FM 32 the original LATCHES
+  (osc1 wraps before osc2's pulse ever goes low: a constant), ours does
+  not; FM with sync off, and sync without FM, match. Tried: sync on
+  negative-going wraps, FM >= 0, pulse FM input x2 / bipolar: no gain.
+  patch0010 (LPDL + smooth random LFO). A resonant LP24 pulled shut by a
+  strongly negative env with a slow attack stays louder in the original.
+  PW: within ~1 / 254 of the original (the old 1.5 / 254 gap was mostly the
+  LFO speed law).
 - iPad AUv3: built and harness-tested, device testing / App Store release
   pending.
 - Patch loads are one VST3 group edit (`SynthEditorCore::GroupEdit`: one
