@@ -264,7 +264,10 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   `PatchManager::Configure` → `SeedStarterBanks`: each bank not yet listed
   in `<library>/.starter_banks` is copied (hidden temp folder + rename,
   race-safe) as a normal user bank, then listed; a name already in the
-  library is only listed. Never updated / restored afterwards; a bank
+  library root (the user's bank, even empty, a file, a link) is NEVER
+  written into, only listed; the final rename is `RenameNoReplace`
+  (RENAME_EXCL: POSIX rename would replace an empty folder created
+  meanwhile). Never updated / restored afterwards; a bank
   added in a later version gets copied. Happens on first plugin load (the
   installer never touches homes).
 - `build_vst3.sh` empties both bundled folders before building (Xcode's

@@ -630,10 +630,25 @@ inline int CopyBankTree(const std::filesystem::path &src, const std::filesystem:
 inline constexpr const char *kStarterBanksFolder = "Synth2 Starter Banks";
 inline constexpr const char *kSeededFile = ".starter_banks";
 
-// Copies the starter banks not yet recorded; a bank whose folder name is
-// already taken (imported by hand) is only recorded. Each bank is written to
-// a hidden temp folder renamed into place, so two instances starting at once
-// can't leave a half bank or a "Bank 2". Returns the number of banks copied.
+// rename() that never replaces `to` (POSIX rename would replace an empty
+// folder created meanwhile): Apple's RENAME_EXCL, else exists + rename.
+inline bool RenameNoReplace(const std::filesystem::path &from, const std::filesystem::path &to) {
+#if defined(__APPLE__)
+    return renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0;
+#else
+    std::error_code ec;
+    if (std::filesystem::exists(std::filesystem::symlink_status(to, ec))) return false;
+    std::filesystem::rename(from, to, ec);
+    return !ec;
+#endif
+}
+
+// Copies the starter banks not yet recorded; a bank whose name is already
+// taken in the library root (the user's own bank, even empty, or a file) is
+// NEVER written into, only recorded. Each bank is written to a hidden temp
+// folder renamed into place without replacing anything, so two instances
+// starting at once can't leave a half bank or a "Bank 2". Returns the number
+// of banks copied.
 inline int SeedStarterBanks(const std::filesystem::path &root, const std::filesystem::path &starter) {
     std::error_code ec;
     if (root.empty() || starter.empty() || !std::filesystem::is_directory(starter, ec) ||
@@ -655,12 +670,9 @@ inline int SeedStarterBanks(const std::filesystem::path &root, const std::filesy
         if (!std::filesystem::is_directory(src, ec) || std::find(seeded.begin(), seeded.end(), name) != seeded.end())
             continue;
         const std::filesystem::path dest = root / name;
-        if (!std::filesystem::exists(dest, ec)) {
+        if (!std::filesystem::exists(std::filesystem::symlink_status(dest, ec))) {
             const std::filesystem::path temp = root / (".oxo_seed_" + std::to_string(std::random_device{}()) + ".tmp");
-            if (CopyBankTree(src, temp) > 0) {
-                std::filesystem::rename(temp, dest, ec);
-                n += !ec;
-            }
+            if (CopyBankTree(src, temp) > 0) n += RenameNoReplace(temp, dest);
             if (std::filesystem::exists(temp, ec)) std::filesystem::remove_all(temp, ec); // lost the race
         }
         if (std::filesystem::exists(dest, ec)) std::ofstream(record, std::ios::binary | std::ios::app) << name << '\n';

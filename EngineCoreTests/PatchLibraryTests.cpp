@@ -330,6 +330,34 @@ OXO_TEST(StarterBanksAreSeededOnce) {
     fs::remove_all(base);
 }
 
+// A starter bank never lands on a user item of the same name: an empty user
+// folder, a file, a dangling link (folder created / removed meanwhile).
+OXO_TEST(StarterBanksNeverReplaceUserItems) {
+    const fs::path base = FreshDir("oxo_s2_starter_keep_test");
+    const fs::path root = base / "Synth2", starter = base / kStarterBanksFolder;
+    for (const char *b : {"Empty", "File", "Link"}) {
+        fs::create_directories(starter / b);
+        WriteFile(starter / b / "001.sy1", "S\nver=112\n");
+    }
+    fs::create_directories(root / "Empty");
+    WriteFile(root / "File", "mine");
+    fs::create_directory_symlink(base / "gone", root / "Link");
+    OXO_EXPECT_EQ(SeedStarterBanks(root, starter), 0);
+    OXO_EXPECT(fs::is_empty(root / "Empty"));
+    std::string text;
+    ReadTextFile(root / "File", text);
+    OXO_EXPECT_EQ(text, std::string("mine"));
+    OXO_EXPECT(fs::is_symlink(root / "Link") && !fs::exists(base / "gone"));
+
+    // the rename itself refuses an existing (even empty) folder
+    fs::create_directories(base / "temp");
+    WriteFile(base / "temp" / "001.sy1", "S\nver=112\n");
+    OXO_EXPECT(!RenameNoReplace(base / "temp", root / "Empty"));
+    OXO_EXPECT(fs::is_empty(root / "Empty") && fs::exists(base / "temp" / "001.sy1"));
+    OXO_EXPECT(RenameNoReplace(base / "temp", root / "New"));
+    fs::remove_all(base);
+}
+
 // Delete bank: a plain bank folder goes whole (Trash, or deleted without
 // one); a folder holding sub-banks and the root's own bank lose only their
 // .sy1 files; the factory bank and bad indices are refused.
