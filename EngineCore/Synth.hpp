@@ -21,6 +21,7 @@ inline constexpr int kMaxVoices = 32;
 class Synth {
 public:
     Synth() {
+        for (int i = 0; i < kMaxVoices; ++i) voices_[i].InitSlot(i, rng_);
         SetPatch(DefaultValues());
         SetSampleRate(44100.0);
     }
@@ -158,6 +159,7 @@ private:
                 const bool glide = porta && (!values_[kPortaAuto] || legatoPlay);
                 for (Voice &v : voices_)
                     if (v.Active()) v.ChangeNote(key, velocity, mode == 1, glide);
+                if (mode == 1) RetriggerPhases();
                 return;
             }
         }
@@ -173,25 +175,37 @@ private:
         // (64 = mono, 0/127 = hard opposite), odd voices shifted by pitch - 24.
         const int n = std::clamp<int>(values_[kUnisonVoices], 2, 8);
         const double d = tables::kUnisonDetuneCents[values_[kUnisonDetune]];
-        const double spread = (64 - values_[kUnisonPan]) / 64.0;
+        // (measured, check_unison.py) the lowest voice goes right below 64
+        const double spread = (values_[kUnisonPan] - 64) / 64.0;
         const uint64_t age = ++ageCounter_;
-        const Rng shared = rng_; // (measured) stacked voices start phase-coherent
-        // (measured) unison phase shift: voice i starts kPhaseDeg[i] * v / 127
-        // degrees later (fixed per voice, any voice count); with osc phase 0
-        // (free) the original behaves as v = 127.
+        const Rng shared = rng_; // the stacked voices share one noise sequence
+        // (measured) unison phase shift (osc phase > 0; with 0 the slots'
+        // phases carry on): the k-th voice started starts kPhaseDeg[k] * v /
+        // 127 degrees later (any voice count; = the slots' initial phases).
         static constexpr double kPhaseDeg[8] = {0, 62.2, 356.4, 60.5, 317.0, 281.5, 136.3, 303.1};
-        const double shift = (values_[kOscPhase] == 0 ? 127 : values_[kUnisonPhase]) / 127.0 / 360.0;
-        // (measured, measure_unison_phase.py) but with osc phase 0 the osc1
-        // detune copies of each stacked voice start at unrelated phases (a
-        // coherent stack sums up to +12 dB louder and phases).
-        Rng copies{shared.state * 0x9E3779B1u}; // odd factor: never 0
-        for (int i = 0; i < n; ++i) {
+        const double shift = values_[kUnisonPhase] / 127.0 / 360.0;
+        // (measured, check_unison.py) a note takes min(voices, polyphony)
+        // voices (round robin as usual); a voice's place in the stack
+        // (detune, pan, odd = pitch) is FIXED by its slot: slot % voices (a
+        // stack may hold a place twice); the phase shift follows k.
+        const int sounding = std::min(n, std::clamp<int>(values_[kPolyphony], 1, kMaxVoices));
+        for (int k = 0; k < sounding; ++k) {
             Rng voice = shared;
+            Voice &v = AllocateVoice();
+            const int i = lastVoice_ % n;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
-            AllocateVoice().Start(key, velocity, values_, voice, age, t * d, t * spread,
-                                  (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[i] * shift, &copies);
+            if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
+            v.Start(key, velocity, values_, voice, age, t * d, t * spread, (i & 1) ? values_[kUnisonPitch] - 24 : 0,
+                    kPhaseDeg[k] * shift);
         }
-        rng_ = copies;
+        rng_.NextU32();
+    }
+
+    // (measured, check_unison.py) a mono retrigger restarts the oscillator
+    // phases like a new note (osc phase > 0; a stack keeps its offsets).
+    void RetriggerPhases() {
+        for (Voice &v : voices_)
+            if (v.Active() && v.Gate()) v.StartPhases(values_, rng_);
     }
 
     void RemoveHeld(int key) {
@@ -209,8 +223,13 @@ private:
                 // (measured, measure_mono.py) mono retriggers the envelopes here
                 // (velocity of the last note kept), legato does not
                 const int back = held_[n - 1];
+                bool changed = false;
                 for (Voice &v : voices_)
-                    if (v.Active() && v.Note() == key) v.ChangeNote(back, -1, values_[kPlayMode] == 1, values_[kPortaTime] > 0);
+                    if (v.Active() && v.Note() == key) {
+                        v.ChangeNote(back, -1, values_[kPlayMode] == 1, values_[kPortaTime] > 0);
+                        changed = true;
+                    }
+                if (changed && values_[kPlayMode] == 1) RetriggerPhases();
                 lastPitch_ = back;
                 return;
             }

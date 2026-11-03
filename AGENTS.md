@@ -490,7 +490,12 @@ original AU; keeps both renders for listening).
   deviates up to ~0.1 semi from linear.
 - Mono / legato: a new note retriggers in mono (new velocity), glides in
   legato; releasing it falls back to the previous held key, mono
-  RETRIGGERS there (last velocity), legato does not.
+  RETRIGGERS there (last velocity), legato does not. A mono retrigger also
+  restarts the osc phases (osc phase > 0).
+- EVENT TIMING: the original applies MIDI events at the start of their
+  16-sample sub-block (host-block relative: up to 15 samples early); we
+  don't (inaudible), but null tests need note times on that grid
+  (`check_unison.grid`).
 - Voice allocation: ROUND ROBIN (next idle voice after the last started).
   Stealing: the oldest RELEASED voice first, then the oldest held one.
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
@@ -520,19 +525,30 @@ original AU; keeps both renders for listening).
   PRODUCT of the per-LFO gains.
   Probe rule: calibrate cutoff_probe with the SAME timing on the SAME
   engine.
-- Phase knobs: osc phase (91) 0 = free phases (s1 free-running, ours
-  random); > 0 = osc1 starts at 0, osc2 at (v-1)/126·180°, detune copy i at
-  kCopyPhaseDeg[i]·(v-1)/126 (Voice.hpp). Unison phase (92): voice i starts
-  kPhaseDeg[i]·v/127 later; with osc phase 0 s1 acts as v = 127.
+- Phase knobs: osc phase (91) 0 = FREE: a voice SLOT's oscillators are
+  never reset, they carry on from the slot's last note (frozen while idle)
+  from per-slot values set at instance creation (`measure_slot_phase.py` →
+  `kSlotOsc1Phase` / `kSlotOsc2Phase`, 32 slots; slots 0..7 osc1 =
+  kPhaseDeg; detune copies: random per slot, TODO(measure)). > 0 = osc1
+  starts at 0, osc2 at (v-1)/126·180°, detune copy i at
+  kCopyPhaseDeg[i]·(v-1)/126 (Voice.hpp); a MONO RETRIGGER restarts them
+  too. Unison phase (92, osc phase > 0 only): the k-th voice started starts
+  kPhaseDeg[k]·v/127 later.
 - Mod env amount m = (amt-64)/63 above 64, /64 below. Pitch = ±60
   semis·m·env. PW = the LFO's room-left law with m·env. FM = room-left in
   FM-knob units with m·g: g = env during the attack, during the DECAY g = 1
   + ln(env)/ln(1e4) (FM offset falls LINEARLY to 0 at 9.2 taus).
-- Unison: voices start phase-coherent, spread evenly ±D (table), odd
-  voices + (pitch-24) semis, no level compensation. EXCEPT with osc phase 0
-  the osc1 detune copies of each stacked voice start at unrelated phases
-  (`measure_unison_phase.py`; coherent copies = up to +12 dB and phasing). Portamento, pan
-  measured (tables).
+- Unison (`check_unison.py`: every knob + interactions vs the original,
+  nulls ≤ -20 dB where phases are deterministic): a note takes min(voices,
+  polyphony) voices (round robin); a voice's PLACE p is FIXED by its slot,
+  p = slot % voices (a stack may hold a place twice): detune t·D (t =
+  2p/(N-1) - 1, D table), pan spread t·(v-64)/64 (below 64 the LOWEST
+  voice goes RIGHT), odd p + (pitch-24) semis; no level compensation. The
+  stack voices share osc phases only through the knobs above (osc phase 0:
+  each slot's own phases; coherent copies were +12 dB and phasing). Poly
+  portamento glides the stack like a single voice.
+- Pan: patch pan q = (v-64)/64 below the centre, /63 above; balance gains
+  (centre 1/1, hard side 1/0); patch pan × unison spread gains MULTIPLY.
 - Delay: spread = one side later by 100 ms·10^((|v-64|-63)/21) (0 at 64);
   delay / EQ tone share one law (LP 190 Hz·2^(t/8.7) below 64, HP above).
   Arp gate 0 = silent.
@@ -587,12 +603,16 @@ original AU; keeps both renders for listening).
 
 ## Status and open items
 
-- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.32
-  dB, spec 2.99 dB, env 3.54 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.24
+  dB, spec 2.88 dB, env 3.41 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
   arp random sequence (+ S&H / smooth LFO / noise sequences: not the
   original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top
   cutoffs.
+- PORTAMENTO gaps (`check_unison.py porta`, also without unison): the
+  original's glide lands exactly in finite time (ours exponential tail);
+  in poly it glides from the VOICE's own last pitch (a never-used voice
+  from far below, also the first note after load), ours from the last note.
 - Worst presets: patch0106 (+21 dB), patch0025, patch0163 (sync + FM + arp
   + fx combos; isolated: sync + FM 64 + osc2 PULSE is ~20 dB too loud at
   keys 36 / 48, fine without sync or with a triangle), patch0010 (LPDL + smooth random LFO). A resonant LP24

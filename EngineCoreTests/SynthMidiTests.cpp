@@ -137,6 +137,66 @@ OXO_TEST(UnisonDetuneCopiesAreIncoherent) {
     OXO_EXPECT(ratio > 4 && ratio < 20);
 }
 
+// (measured) unison pan spread below 64 sends the LOWEST voice right, and
+// the patch pan multiplies its gains with the spread's (hard left patch pan:
+// the right-spread voice falls silent instead of moving to the centre).
+OXO_TEST(UnisonPanSpreadDirectionAndPatchPan) {
+    const auto render = [](int patchPan, std::vector<float> &l, std::vector<float> &r) {
+        Synth s;
+        s.SetSampleRate(48000);
+        s.SetParam(kOsc1Shape, 0);
+        s.SetParam(kOscMix, 0);
+        s.SetParam(kUnisonOn, 1);
+        s.SetParam(kUnisonVoices, 2);
+        s.SetParam(kUnisonDetune, 127); // +-50 cents
+        s.SetParam(kUnisonPan, 0);
+        s.SetParam(kPan, patchPan);
+        l.assign(48000, 0), r.assign(48000, 0);
+        s.NoteOn(69, 127);
+        s.Render(l.data(), r.data(), 48000);
+    };
+    const auto crossings = [](const std::vector<float> &x) {
+        int n = 0;
+        for (size_t i = 1; i < x.size(); ++i) n += (x[i - 1] < 0) != (x[i] < 0);
+        return n;
+    };
+    std::vector<float> l, r;
+    render(64, l, r);
+    OXO_EXPECT(crossings(l) > crossings(r) + 20); // left = the voice 50 cents up
+    render(0, l, r);
+    double right = 0;
+    for (float x : r) right += double(x) * x;
+    OXO_EXPECT(right < 1e-9);
+}
+
+// (measured) a mono retrigger restarts the oscillator phases (osc phase > 0).
+OXO_TEST(MonoRetriggerRestartsPhases) {
+    const auto setup = [](Synth &s) {
+        s.SetSampleRate(48000);
+        s.SetParam(kPlayMode, 1);
+        s.SetParam(kOscPhase, 1);
+        s.SetParam(kOscMix, 0);
+        // flat: no envelope, LFO or chorus state to tell the two apart
+        for (const auto &[id, v] : {std::pair{kAmpSustain, 127}, {kFilterFreq, 127}, {kFilterAmount, 64},
+                                     {kFilterRes, 0}, {kLfo1On, 0}, {kLfo2On, 0}, {kChorusOn, 0}, {kDelayOn, 0}})
+            s.SetParam(id, v);
+        Run(s, 4800); // cutoff knob glide over
+    };
+    Synth held, fresh;
+    setup(held);
+    setup(fresh);
+    std::vector<float> a(1000), b(1000), r(1000);
+    held.NoteOn(60, 127);
+    held.Render(a.data(), r.data(), 777);
+    held.NoteOn(64, 127);
+    held.Render(a.data(), r.data(), 1000);
+    fresh.NoteOn(64, 127);
+    fresh.Render(b.data(), r.data(), 1000);
+    float diff = 0;
+    for (size_t i = 64; i < a.size(); ++i) diff = std::max(diff, std::fabs(a[i] - b[i]));
+    OXO_EXPECT(diff < 0.01f);
+}
+
 // Master volume: Synth1's measured vol law, not a patch parameter.
 OXO_TEST(MasterVolumeScalesOutput) {
     const auto peak = [](int volume) {
@@ -166,6 +226,7 @@ OXO_TEST(CutoffKnobGlides) {
         s.SetSampleRate(48000);
         s.SetParam(kFilterFreq, 40);
         s.SetParam(kFilterRes, 0);
+        s.SetParam(kOscMix, 0); // osc1 alone: no osc1 / osc2 beating in the energy windows
         s.NoteOn(60, 127);
         std::vector<float> l(4800), r(4800), out;
         s.Render(l.data(), r.data(), 4800);

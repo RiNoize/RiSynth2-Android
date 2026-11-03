@@ -10,9 +10,10 @@ a released 1st), osc phase 0 (free) and 64. Prints, per copy, the phase of
 voice 1 minus voice 0 (main = osc1 itself), then the level of a 4-voice
 stack over a single voice.
 
-Result (original): osc phase 0 = the mains keep a fixed offset (~kPhaseDeg)
-but the copies differ per voice and per note (unrelated phases: the stack
-sums by power, not coherently); osc phase > 0 = everything coherent. The
+Result (original): osc phase 0 = the mains differ by their voice slots'
+initial phases (measure_slot_phase.py; fresh slots 0..7 = kPhaseDeg) and
+the copies are unrelated per voice (the stack sums by power, not
+coherently); osc phase > 0 = everything coherent. The
 original's uniform ~17 degree excess on every partial (both modes) is a fit
 bias common to the whole voice (onset latency or a 0.06 cent pitch gap),
 not a phase offset.

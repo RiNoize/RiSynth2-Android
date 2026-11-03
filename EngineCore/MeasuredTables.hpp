@@ -265,6 +265,22 @@ inline constexpr float kUnisonDetuneCents[128] = {
     43.94621f, 44.79543f, 45.64464f, 46.49386f, 47.34307f, 48.22232f, 49.10158f, 49.98083f,
 };
 
+// osc phase 0: initial osc1 phase (cycles) of voice slot 0..31
+inline constexpr float kSlotOsc1Phase[32] = {
+    0.0012f, 0.1741f, 0.9887f, 0.1661f, 0.8759f, 0.7793f, 0.3753f, 0.8373f,
+    0.5992f, 0.5173f, 0.1477f, 0.1532f, 0.7322f, 0.8344f, 0.4713f, 0.1957f,
+    0.5315f, 0.3144f, 0.253f, 0.114f, 0.4365f, 0.1896f, 0.9309f, 0.4513f,
+    0.1843f, 0.4944f, 0.9117f, 0.1086f, 0.5452f, 0.8265f, 0.6093f, 0.9198f,
+};
+
+// osc phase 0: initial osc2 phase (cycles) of voice slot 0..31
+inline constexpr float kSlotOsc2Phase[32] = {
+    0.5636f, 0.8589f, 0.446f, 0.663f, 0.7266f, 0.8437f, 0.0922f, 0.7262f,
+    0.3855f, 0.9902f, 0.9497f, 0.8773f, 0.4056f, 0.0349f, 0.3745f, 0.7611f,
+    0.1943f, 0.9413f, 0.1445f, 0.4546f, 0.2325f, 0.3357f, 0.048f, 0.466f,
+    0.7379f, 0.0805f, 0.6148f, 0.8691f, 0.4481f, 0.959f, 0.9557f, 0.5509f,
+};
+
 // filter env amount scale per velocity when the velocity switch is on
 inline constexpr float kFilterVelScale[128] = {
     0.0f, 0.0f, 0.0f, 0.0f, 0.009830258f, 0.02125441f, 0.03267857f, 0.04410272f,

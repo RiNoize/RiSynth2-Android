@@ -51,11 +51,19 @@ public:
         postB_ = (1 - k) / (1 + k);
     }
 
+    // (measured, measure_slot_phase.py) with osc phase 0 the original never
+    // resets a voice slot's oscillators: they carry on from the slot's last
+    // note (frozen while idle), from per-slot values set at creation.
+    void InitSlot(int slot, Rng &rng) {
+        osc1Phase_ = tables::kSlotOsc1Phase[slot % 32];
+        osc2Phase_ = tables::kSlotOsc2Phase[slot % 32];
+        for (double &ph : detunePhase_) ph = rng.Unit(); // TODO(measure): the copies' initial phases
+    }
+
     // detuneCents / pan (-1..1) / pitchSemis / phase (cycles): this voice's
-    // place in a unison stack; copyRng (if set) draws the free detune copy
-    // phases instead of rng.
+    // place in a unison stack.
     void Start(int note, int velocity, const PatchValues &p, Rng &rng, uint64_t age, double detuneCents = 0,
-               double pan = 0, double pitchSemis = 0, double unisonPhase = 0, Rng *copyRng = nullptr) {
+               double pan = 0, double pitchSemis = 0, double unisonPhase = 0) {
         unisonSemis_ = detuneCents / 100.0 + pitchSemis;
         unisonPan_ = pan;
         note_ = note;
@@ -73,30 +81,31 @@ public:
         // (measured) mod env = AD with the amp env's attack / decay laws
         modEnv_.Configure(sampleRate_, p[kModEnvAttack], p[kModEnvDecay], 0, 0, Adsr::SustainLaw::Linear);
         modEnv_.Trigger();
-        // (measured) osc phase 0 = free phases; > 0 = osc1 starts at phase 0,
-        // osc2 at (v - 1) / 126 of half a cycle (127 = 180 degrees).
-        osc1Phase_ = rng.Unit();
-        osc2Phase_ = rng.Unit();
+        unisonPhase_ = unisonPhase;
+        StartPhases(p, rng);
+        postZ_ = postY_ = 0;
+        filter_.Reset();
+    }
+
+    // Oscillator start phases (Start; a mono retrigger restarts them too).
+    void StartPhases(const PatchValues &p, Rng &rng) {
+        // (measured) osc phase 0 = free: the slot's phases carry on (InitSlot);
+        // > 0 = osc1 starts at phase 0, osc2 at (v - 1) / 126 of half a cycle
+        // (127 = 180 degrees), both shifted by the unison phase.
         if (p[kOscPhase] > 0) {
-            osc1Phase_ = 0;
-            osc2Phase_ = 0.5 * (p[kOscPhase] - 1) / 126.0;
+            osc1Phase_ = Wrap(unisonPhase_);
+            osc2Phase_ = Wrap(0.5 * (p[kOscPhase] - 1) / 126.0 + unisonPhase_);
+            // (measured) copy i starts kCopyPhaseDeg[i] * (v - 1) / 126 after osc1
+            static constexpr double kCopyPhaseDeg[kDetuneOscs] = {321, 172, 291, 202, 0, 69, 210, 126};
+            for (int i = 0; i < kDetuneOscs; ++i)
+                detunePhase_[i] = Wrap(osc1Phase_ + kCopyPhaseDeg[i] / 360.0 * (p[kOscPhase] - 1) / 126.0);
         }
-        osc1Phase_ = Wrap(osc1Phase_ + unisonPhase);
-        osc2Phase_ = Wrap(osc2Phase_ + unisonPhase);
         // (measured) the sub runs phase-locked to osc1: its harmonic at osc1's
         // pitch is in phase with osc1's fundamental.
         const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
         subPhase_ = osc1Phase_ * subRatio;
-        for (int i = 0; i < kDetuneOscs; ++i) {
-            detunePhase_[i] = (copyRng ? *copyRng : rng).Unit();
-            // (measured) with osc phase > 0 copy i starts kCopyPhaseDeg[i] * (v - 1) / 126 after osc1
-            static constexpr double kCopyPhaseDeg[kDetuneOscs] = {321, 172, 291, 202, 0, 69, 210, 126};
-            if (p[kOscPhase] > 0) detunePhase_[i] = Wrap(osc1Phase_ + kCopyPhaseDeg[i] / 360.0 * (p[kOscPhase] - 1) / 126.0);
-            subDetunePhase_[i] = detunePhase_[i] * subRatio;
-        }
+        for (int i = 0; i < kDetuneOscs; ++i) subDetunePhase_[i] = detunePhase_[i] * subRatio;
         noiseRng_.state = rng.NextU32() | 1u;
-        postZ_ = postY_ = 0;
-        filter_.Reset();
     }
 
     // Portamento source for the next Start (pitch of the previous note).
@@ -242,9 +251,14 @@ public:
         //           1 (lfo > 0) or 0 (lfo < 0) by depth / 127 * |lfo| of the
         //           room left on that side: never wraps, +-0.5 for a square.
 
-        // balance law (measured on unison spread): centre 1/1, hard side 1/0
-        const double pan = std::clamp((p[kPan] - 64) / 63.0 + unisonPan_, -1.0, 1.0);
-        const double panL = std::min(1.0, 1.0 - pan), panR = std::min(1.0, 1.0 + pan);
+        // balance law (measured on unison spread): centre 1/1, hard side 1/0.
+        // (measured, check_unison.py) patch pan (q = (pan - 64) / 64 below
+        // the centre, / 63 above) and the unison spread MULTIPLY their gains.
+        double panL = 1, panR = 1;
+        for (const double q : {(p[kPan] - 64) / (p[kPan] < 64 ? 64.0 : 63.0), unisonPan_}) {
+            panL *= std::min(1.0, 1.0 - q);
+            panR *= std::min(1.0, 1.0 + q);
+        }
 
         for (int i = 0; i < frames; ++i) {
             // ---- per-sample modulation ----
@@ -402,7 +416,7 @@ private:
     Adsr modEnv_;
     VoiceFilter filter_;
     int note_ = 0, velocity_ = 0;
-    double unisonSemis_ = 0, unisonPan_ = 0;
+    double unisonSemis_ = 0, unisonPan_ = 0, unisonPhase_ = 0;
     double glideNote_ = 60, glideFrom_ = -1;
     uint64_t age_ = 0;
     bool gate_ = false;

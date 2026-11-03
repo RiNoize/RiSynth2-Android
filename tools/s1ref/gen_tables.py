@@ -45,6 +45,7 @@ def main():
     lfo_keysync = load("lfo_keysync.json")["s1"]
     uni = load("unison.json")
     uni_det = [float(np.interp(v, uni["vals"], uni["detune_cents"])) for v in range(128)]
+    slot = load("slot_phase.json")
     pc = list(lfo["pitch_cents"])
     # the old estimator broke down near full depth: the key-synced
     # measurement (measure_lfo_keysync.py) covers 112..127
@@ -89,6 +90,8 @@ def main():
         table("kKbdTrack", fmod["kbd_track_factor"], "filter kbd track: cutoff octaves per key octave (pivot key 48)"),
         table("kLfoPitchCents", pc, "LFO -> pitch: amplitude in cents per depth knob"),
         table("kUnisonDetuneCents", uni_det, "unison: voices spread evenly over +-D cents"),
+        table("kSlotOsc1Phase", slot["osc1"], "osc phase 0: initial osc1 phase (cycles) of voice slot 0..31"),
+        table("kSlotOsc2Phase", slot["osc2"], "osc phase 0: initial osc2 phase (cycles) of voice slot 0..31"),
         table("kFilterVelScale", vel_scale, "filter env amount scale per velocity when the velocity switch is on"),
         table("kLpdlW", dl_w, "LPDL stage rate w (rad/s), [res 0,16,..,112,127][cutoff 0,4,..,124]"),
         table("kLpdlK", dl_k, "LPDL feedback k (high-passed at 100 Hz), same grid"),
