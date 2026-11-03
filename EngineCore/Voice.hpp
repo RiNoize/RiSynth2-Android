@@ -60,15 +60,14 @@ public:
         for (int i = 0; i < kDetuneOscs; ++i) detunePhase_[i] = tables::kSlotCopyPhase[(slot % 32) * kDetuneOscs + i];
     }
 
+    // glide: portamento from this voice's own last pitch (measured).
     // detuneCents / pan (-1..1) / pitchSemis / phase (cycles): this voice's
     // place in a unison stack.
-    void Start(int note, int velocity, const PatchValues &p, Rng &rng, uint64_t age, double detuneCents = 0,
-               double pan = 0, double pitchSemis = 0, double unisonPhase = 0) {
+    void Start(int note, int velocity, bool glide, const PatchValues &p, Rng &rng, uint64_t age,
+               double detuneCents = 0, double pan = 0, double pitchSemis = 0, double unisonPhase = 0) {
         unisonSemis_ = detuneCents / 100.0 + pitchSemis;
         unisonPan_ = pan;
-        note_ = note;
-        glideNote_ = glideFrom_ >= 0 ? glideFrom_ : note;
-        glideFrom_ = -1;
+        SetNote(note, glide);
         velocity_ = velocity;
         age_ = age;
         gate_ = true;
@@ -117,14 +116,9 @@ public:
         noiseRng_.state = rng.NextU32() | 1u;
     }
 
-    // Portamento source for the next Start (pitch of the previous note).
-    void SetGlideFrom(double note) { glideFrom_ = note; }
-    double CurrentPitch() const { return glideNote_; }
-
     // Mono / legato note change on a sounding voice.
     void ChangeNote(int note, int velocity, bool retrigger, bool glide) {
-        note_ = note;
-        if (!glide) glideNote_ = note;
+        SetNote(note, glide);
         gate_ = true;
         if (retrigger) {
             if (velocity >= 0) velocity_ = velocity; // < 0: keep the current one
@@ -157,6 +151,27 @@ public:
     void Render(float *left, float *right, int frames, const PatchValues &p, double bendSemis,
                 const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         if (!Active()) return;
+        if (p[kPortaTime] <= 0) glide_ = note_;
+        // (measured, measure_porta.py) a glide moves every 16 samples
+        for (int off = 0; off < frames;) {
+            const bool gliding = glide_ != note_;
+            const int n = gliding ? std::min(frames - off, glideTick_) : frames - off;
+            const double *at[2] = {lfo[0] ? lfo[0] + off : nullptr, lfo[1] ? lfo[1] + off : nullptr};
+            RenderChunk(left + off, right + off, n, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
+            off += n;
+            if (gliding && (glideTick_ -= n) == 0) {
+                glideTick_ = 16;
+                // r -> r * a - E * (1 - a): exponential, aimed E past the target (lands)
+                const double r = glide_ - note_, a = std::exp(-16.0 / (tables::kPortaTau[p[kPortaTime]] * sampleRate_));
+                const double rest = std::max(std::abs(r) * a - kGlideOvershoot * (1 - a), 0.0);
+                glide_ = note_ + (r < 0 ? -rest : rest);
+            }
+        }
+    }
+
+private:
+    void RenderChunk(float *left, float *right, int frames, const PatchValues &p, double bendSemis,
+                     const double *const lfo[2], double cutoffKnob, double cutoffStep) {
         // ---- LFO routing (measured depth laws per destination). Both LFOs on
         // one destination (measured, measure_lfo_sum.py): pitch = sum of each
         // LFO's cents; cutoff / FM / pw / pan = the law applied to the
@@ -175,10 +190,10 @@ public:
         };
         // ---- per-block parameters ----
         const double tuneSemis = tables::kFineCents[p[kOscFineTune]] / 100.0;
-        // (measured) portamento: exponential glide, tau per knob
-        const double glideCoef = p[kPortaTime] > 0 ? 1.0 - std::exp(-double(frames) / (PortaTau(p[kPortaTime]) * sampleRate_)) : 1.0;
-        glideNote_ += (note_ - glideNote_) * glideCoef;
-        const double base = glideNote_ + p[kOscKeyShift] + tuneSemis + bendSemis + unisonSemis_;
+        // (measured) a glide plays in 1/128-octave steps: target + ceil(r / step)
+        const double gap = glide_ - note_;
+        const double played = note_ + (gap < 0 ? -1 : 1) * kGlideStep * std::ceil(std::abs(gap) / kGlideStep - 1e-9);
+        const double base = played + p[kOscKeyShift] + tuneSemis + bendSemis + unisonSemis_;
         const double f1 = NoteHz(base);
         const double osc2Note = (p[kOsc2KbdTrack] ? base : 57.0 + tuneSemis + bendSemis) +
                                 tables::kOsc2PitchSemis[p[kOsc2Pitch]] + tables::kFineCents[p[kOsc2Fine]] / 100.0;
@@ -396,7 +411,6 @@ public:
         }
     }
 
-private:
     // The LFOs (0..2) routed to one destination.
     struct LfoRoute {
         const double *v[2] = {nullptr, nullptr};
@@ -414,13 +428,12 @@ private:
     };
 
     static double Wrap(double ph) { return ph - std::floor(ph); }
-    static double PortaTau(int v) {
-        static constexpr double knob[9] = {0, 16, 32, 48, 64, 80, 96, 112, 127};
-        static constexpr double tau[9] = {0.0005, 0.0074, 0.0196, 0.039, 0.0716, 0.130, 0.29, 0.6, 1.2};
-        int i = 0;
-        while (i < 7 && v > knob[i + 1]) ++i;
-        const double t = (v - knob[i]) / (knob[i + 1] - knob[i]);
-        return std::exp(std::log(tau[i]) * (1 - t) + std::log(tau[i + 1]) * t);
+    static constexpr double kGlideStep = 12.0 / 128, kGlideOvershoot = 2 * kGlideStep; // semitones
+
+    void SetNote(int note, bool glide) {
+        note_ = note;
+        if (!glide) glide_ = note;
+        glideTick_ = 16;
     }
 
     double sampleRate_ = 44100;
@@ -431,7 +444,8 @@ private:
     VoiceFilter filter_;
     int note_ = 0, velocity_ = 0;
     double unisonSemis_ = 0, unisonPan_ = 0, unisonPhase_ = 0;
-    double glideNote_ = 60, glideFrom_ = -1;
+    double glide_ = 0; // gliding pitch (semis); (measured) a never-used voice starts from note 0
+    int glideTick_ = 16;
     uint64_t age_ = 0;
     bool gate_ = false;
     double osc1Phase_ = 0, osc2Phase_ = 0, subPhase_ = 0;

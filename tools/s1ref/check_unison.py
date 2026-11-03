@@ -28,6 +28,7 @@ NOTE = ((0.0, 1.0, 60, 127),)
 CHORD = grid(((0.0, 1.2, 48, 127), (0.1, 1.2, 55, 127), (0.2, 1.2, 64, 127), (0.3, 1.2, 67, 127)))
 LEGATO = grid(((0.0, 0.6, 60, 127), (0.4, 1.0, 67, 127), (0.9, 1.4, 64, 127)))
 FALLBACK = grid(((0.0, 1.2, 60, 127), (0.3, 0.7, 67, 127)))
+DETACHED = grid(((0.0, 0.4, 60, 127), (0.5, 0.9, 67, 127), (1.0, 1.4, 64, 127)))
 
 
 def base(**kw):
@@ -67,6 +68,8 @@ def cases():
         yield f"playmode{mode}", base(p38=mode), LEGATO
         yield f"playmode{mode}/fallback", base(p38=mode), FALLBACK
         yield f"playmode{mode}/release50", base(p38=mode, p28=50), LEGATO
+        yield f"playmode{mode}/detached/release50", base(p38=mode, p28=50), DETACHED
+        yield f"playmode{mode}/detached/porta60", base(p38=mode, p39=60, p28=50), DETACHED
         yield f"playmode{mode}/oscphase0", base(p38=mode, p91=0), LEGATO
         yield f"playmode{mode}/porta60", base(p38=mode, p39=60), LEGATO
     yield "poly/porta60", base(p39=60), LEGATO

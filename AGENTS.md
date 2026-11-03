@@ -154,8 +154,8 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   compact comma style). Then `tools/au_harness`.
 - `make -C EngineCoreTests test`, `make -C tools/s2render`, CPU bench
   `clang++ -std=c++20 -O2 tools/bench/main.cpp -o build/bench && ./build/bench`
-  (16 voices, one core: LP12 x90, LP24 x80, LPDL x35, detune+sub x23, all
-  fx x70 realtime), `make -C tools/s1ref` (x86_64, needs the original AU).
+  (16 voices, one core: LP12 x80, LP24 x70, LPDL x34, detune+sub x22, all
+  fx x60 realtime), `make -C tools/s1ref` (x86_64, needs the original AU).
 - Python: `.venv` (numpy, scipy) for `tools/s1ref` scripts.
 - MAC INSTALLER: `tools/prepare_mac_installer [--skip-build]
   [--skip-notarize]` → `dist/mac/OxoSynth2-<ver>-<build>-macOS.{pkg,dmg}`
@@ -492,16 +492,29 @@ original AU; keeps both renders for listening).
   legato; releasing it falls back to the previous held key, mono
   RETRIGGERS there (last velocity), legato does not. A mono retrigger also
   restarts the osc phases (osc phase > 0).
-- EVENT TIMING: the original applies MIDI events at the start of their
-  16-sample sub-block (host-block relative: up to 15 samples early); we
-  don't (inaudible), but null tests need note times on that grid
-  (`check_unison.grid`).
+- EVENT TIMING: the original starts / ends notes at the start of their
+  16-sample sub-block (host-block relative: up to 15 samples early); bend /
+  CC are not snapped. Ours too (`NoteEventOffset`: VST3 processor, AUv3
+  render loop, s2render).
+- PORTAMENTO (`measure_porta.py` → `kPortaTau`): every 16 samples the
+  distance r ← max(r·a − E·(1−a), 0), a = exp(−16/(tau·sr)) (tau in s, same
+  at any rate), E = 18.75 cents past the target (lands in finite time,
+  ~308 ms for an octave at 64); played pitch = target + ceil(r / 9.375
+  cents) steps (1/128 octave: slow glides end in audible steps). A voice
+  glides from ITS OWN last pitch (never used: MIDI note 0, so the first
+  note after loading sweeps up from far below); mono / legato always use
+  voice slot 0 (unison 0..N-1, also while the last note releases); auto
+  mode: mono legato notes only, never poly.
 - Voice allocation: ROUND ROBIN (next idle voice after the last started).
   Stealing: the oldest RELEASED voice first, then the oldest held one
   (age = start time in samples). A stolen voice still sounding keeps its
   filter / output state and a free-running sub (resetting them clicked).
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
-  patches). Stuck-free rules (fuzz test
+  patches). A patch LOAD (editor / browser: `PatchLoading` → VST3
+  "OxoPatchLoad", AUv3 flag) also fades the voice mix (pre effects): 25 ms
+  out, the edits made meanwhile land at silence (voice filters cleared, no
+  cutoff glide), hold while edits keep coming (10 ms quiet, 150 ms max),
+  250 ms in (`Synth::BeginPatchChange`; host automation is not faded). Stuck-free rules (fuzz test
   `RandomPatchSwitchesUnderHeldKeysLeaveNoStuckNote`): the mono key stack
   follows every key in EVERY play mode; All Notes Off / Reset clear it and
   the arp keys; arp on takes the held keys, arp off gives them voices back.
@@ -531,7 +544,7 @@ original AU; keeps both renders for listening).
   never reset, they carry on from the slot's last note (frozen while idle)
   from per-slot values set at instance creation (`measure_slot_phase.py` →
   `kSlotOsc1Phase` / `kSlotOsc2Phase`, 32 slots; slots 0..7 osc1 =
-  kPhaseDeg; detune copies: random per slot, TODO(measure)). > 0 = osc1
+  kPhaseDeg; detune copies `kSlotCopyPhase`). > 0 = osc1
   starts at 0, osc2 at (v-1)/126·180°, detune copy i at
   kCopyPhaseDeg[i]·(v-1)/126 (Voice.hpp); a MONO RETRIGGER restarts them
   too. Unison phase (92, osc phase > 0 only): the k-th voice started starts
@@ -549,8 +562,8 @@ original AU; keeps both renders for listening).
   2p/(N-1) - 1, D table), pan spread t·(v-64)/64 (below 64 the LOWEST
   voice goes RIGHT), odd p + (pitch-24) semis; no level compensation. The
   stack voices share osc phases only through the knobs above (osc phase 0:
-  each slot's own phases; coherent copies were +12 dB and phasing). Poly
-  portamento glides the stack like a single voice.
+  each slot's own phases; coherent copies were +12 dB and phasing). Each
+  stack voice glides from its own last pitch (PORTAMENTO).
 - Pan: patch pan q = (v-64)/64 below the centre, /63 above; balance gains
   (centre 1/1, hard side 1/0); patch pan × unison spread gains MULTIPLY.
 - Delay: spread = one side later by 100 ms·10^((|v-64|-63)/21) (0 at 64);
@@ -609,16 +622,17 @@ original AU; keeps both renders for listening).
 
 ## Status and open items
 
-- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.24
-  dB, spec 2.88 dB, env 3.41 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
+- Preset-wide diff (`compare.py presets`, 416 renders): level |mean| 1.11
+  dB, spec 2.70 dB, env 3.16 dB; `compare.py filter` 0.87 / 2.05 / 2.83.
 - Approximations marked `TODO(measure)` in code: a.d.1 exact structure,
   arp random sequence (+ S&H / smooth LFO / noise sequences: not the
   original's PRNG), EQ above 8 kHz, LPDL resonance frequency near the top
   cutoffs.
-- PORTAMENTO gaps (`check_unison.py porta`, also without unison): the
-  original's glide lands exactly in finite time (ours exponential tail);
-  in poly it glides from the VOICE's own last pitch (a never-used voice
-  from far below, also the first note after load), ours from the last note.
+- Portamento over very large glides (from note 0, first notes) runs a
+  little slower than the original after ~100 ms (tau fitted on octaves).
+- Random sequences (arp random, S&H / smooth LFO, noise) are not the
+  original's PRNG: presets using them (patch0368: random arp) move in the
+  scores whenever our RNG draw order changes.
 - Worst presets: patch0106 (+21 dB), patch0025, patch0163 (sync + FM + arp
   + fx combos; isolated: sync + FM 64 + osc2 PULSE is ~20 dB too loud at
   keys 36 / 48, fine without sync or with a triangle), patch0010 (LPDL + smooth random LFO). A resonant LP24

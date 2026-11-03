@@ -257,6 +257,68 @@ OXO_TEST(PatchSwitchFadesWithoutCuttingNotes) {
     OXO_EXPECT(e > 0.01f);
 }
 
+namespace {
+// Frequency (Hz) of a sine render over [from, to) samples: interpolated
+// upward zero crossings.
+double SineHz(const std::vector<float> &x, int from, int to, double sr) {
+    double first = -1, last = -1;
+    int n = 0;
+    for (int i = from + 1; i < to; ++i)
+        if (x[size_t(i - 1)] < 0 && x[size_t(i)] >= 0) {
+            const double t = i - 1 + x[size_t(i - 1)] / (x[size_t(i - 1)] - x[size_t(i)]);
+            if (first < 0) first = t;
+            last = t;
+            ++n;
+        }
+    return n > 1 ? (n - 1) * sr / (last - first) : 0;
+}
+
+Synth PortaSynth(int mode) {
+    Synth s;
+    s.SetSampleRate(48000);
+    for (const auto &[id, v] : {std::pair{kOsc1Shape, 0}, {kOscMix, 0}, {kPortaTime, 64}, {kPlayMode, mode},
+                                 {kFilterFreq, 127}, {kFilterAmount, 64}, {kAmpSustain, 127}, {kLfo1On, 0},
+                                 {kLfo2On, 0}, {kChorusOn, 0}, {kDelayOn, 0}, {kAmpRelease, 0}})
+        s.SetParam(id, v);
+    return s;
+}
+} // namespace
+
+// (measured, measure_porta.py) a glide lands EXACTLY on the note in finite
+// time (porta 64, an octave: ~308 ms) and a never-used voice glides up from
+// note 0 (the first note after loading).
+OXO_TEST(PortamentoLandsAndStartsFromNoteZero) {
+    Synth s = PortaSynth(2);
+    std::vector<float> x(48000), r(48000);
+    s.NoteOn(60, 127);
+    s.Render(x.data(), r.data(), 1440); // 30 ms
+    OXO_EXPECT(SineHz(x, 480, 1440, 48000) < 100); // still far below middle C
+    s.Render(x.data(), r.data(), 48000);            // settled
+    s.NoteOn(72, 127);                              // legato glide up an octave
+    s.Render(x.data(), r.data(), 24000);
+    const double target = 440 * std::exp2((72 - 69) / 12.0);
+    OXO_EXPECT(SineHz(x, 9600, 10800, 48000) < target * std::exp2(-20 / 1200.0)); // 200..225 ms: still gliding
+    OXO_EXPECT_NEAR(SineHz(x, 16800, 24000, 48000), target, 0.05);                // 350 ms on: landed
+}
+
+// (measured) in poly a voice glides from ITS OWN last pitch, not the last note.
+OXO_TEST(PolyPortamentoGlidesFromTheVoicesLastPitch) {
+    Synth s = PortaSynth(0);
+    s.SetParam(kPolyphony, 2);
+    std::vector<float> x(48000), r(48000);
+    s.NoteOn(60, 127); // slot 0
+    s.Render(x.data(), r.data(), 48000);
+    s.NoteOff(60);
+    s.NoteOn(72, 127); // slot 1 (glides from note 0)
+    s.Render(x.data(), r.data(), 48000);
+    s.NoteOff(72);
+    Run(s, 4800);
+    s.NoteOn(64, 127); // slot 0 again: from 60, upward
+    s.Render(x.data(), r.data(), 4800);
+    const double hz = SineHz(x, 480, 1440, 48000);
+    OXO_EXPECT(hz > 440 * std::exp2((60 - 69) / 12.0) && hz < 440 * std::exp2((64 - 69) / 12.0));
+}
+
 // (measured) a mono retrigger restarts the oscillator phases (osc phase > 0).
 OXO_TEST(MonoRetriggerRestartsPhases) {
     const auto setup = [](Synth &s) {

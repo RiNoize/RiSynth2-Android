@@ -177,12 +177,13 @@ private:
                 return;
             }
         }
-        const double from = lastPitch_;
-        lastPitch_ = key;
+        // (measured, measure_porta.py) a fresh note glides from its voice's
+        // own last pitch (auto mode: never); mono / legato always use voice
+        // slot 0 (unison: 0..N-1), poly the round robin.
+        const bool glide = porta && !values_[kPortaAuto];
         if (!values_[kUnisonOn]) {
-            Voice &v = *AllocateVoice();
-            if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
-            v.Start(key, velocity, values_, rng_, now_);
+            Voice &v = mode != 0 ? MonoVoice(0) : *AllocateVoice();
+            v.Start(key, velocity, glide, values_, rng_, now_);
             return;
         }
         // (measured) unison: N voices evenly over +-D cents, pan spread
@@ -207,14 +208,13 @@ private:
         const int sounding = std::min(n, std::clamp<int>(values_[kPolyphony], 1, kMaxVoices));
         for (int k = 0; k < sounding; ++k) {
             Rng voice = shared;
-            Voice *slot = AllocateVoice(true);
+            Voice *slot = mode != 0 ? &MonoVoice(k) : AllocateVoice(true);
             if (!slot) break;
             Voice &v = *slot;
             const int i = lastVoice_ % n;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
-            if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
-            v.Start(key, velocity, values_, voice, age, t * d, t * spread, (i & 1) ? values_[kUnisonPitch] - 24 : 0,
-                    kPhaseDeg[k] * shift);
+            v.Start(key, velocity, glide, values_, voice, age, t * d, t * spread,
+                    (i & 1) ? values_[kUnisonPitch] - 24 : 0, kPhaseDeg[k] * shift);
         }
         rng_.NextU32();
     }
@@ -248,7 +248,6 @@ private:
                         changed = true;
                     }
                 if (changed && values_[kPlayMode] == 1) RetriggerPhases();
-                lastPitch_ = back;
                 return;
             }
             for (Voice &v : voices_)
@@ -537,6 +536,11 @@ private:
         }
     }
 
+    Voice &MonoVoice(int slot) {
+        lastVoice_ = slot;
+        return voices_[size_t(slot)];
+    }
+
     // keepSameTime (unison): voices started at the same time (same 16-sample
     // sub-block, the original's event grid) can't be stolen; nullptr when
     // nothing else is left.
@@ -585,7 +589,6 @@ private:
     int bend_ = 0;
     int held_[32] = {};
     int heldCount_ = 0;
-    double lastPitch_ = -1;
     int arpKeys_[32] = {};
     int arpCount_ = 0, arpStep_ = -1, arpDir_ = 1, arpVelocity_ = 100, arpPlaying_ = -1;
     int arpCountdown_ = 0, arpGateCountdown_ = 0;
