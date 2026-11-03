@@ -258,7 +258,7 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   delete / drag; write dialog skips it). Updated with the plugin. Program
   bank token `:factory` (`kFactoryProgramBank`), not a path. Its 001 = the
   INIT patch.
-- STARTER BANKS (currently none shipped): `Shared/Resources/Synth2 Starter
+- STARTER BANKS (shipped: "Madame Eljay"): `Shared/Resources/Synth2 Starter
   Banks/<bank>/*.sy1` → bundle `Resources/Synth2 Starter Banks` (sibling
   of the factory folder; CMake loop per bank, Xcode explicit folder).
   `PatchManager::Configure` → `SeedStarterBanks`: each bank not yet listed
