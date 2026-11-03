@@ -169,6 +169,61 @@ OXO_TEST(UnisonPanSpreadDirectionAndPatchPan) {
     OXO_EXPECT(right < 1e-9);
 }
 
+// (measured) a unison chord over the polyphony keeps its FIRST notes: a stack
+// never steals from a note started at the same time.
+OXO_TEST(UnisonChordKeepsFirstNotes) {
+    Synth s;
+    s.SetSampleRate(48000);
+    s.SetParam(kUnisonOn, 1);
+    s.SetParam(kUnisonVoices, 8);
+    s.SetParam(kPolyphony, 16);
+    s.SetParam(kAmpRelease, 0);
+    const auto held = [&] {
+        int n = 0;
+        for (uint64_t st = s.VoiceStates(); st; st >>= 2) n += (st & 3) == Synth::kVoiceHeld;
+        return n;
+    };
+    for (int key : {60, 64, 67}) s.NoteOn(key, 100);
+    Run(s, 64);
+    OXO_EXPECT_EQ(held(), 16);
+    s.NoteOff(67); // dropped: nothing to release
+    Run(s, 64);
+    OXO_EXPECT_EQ(held(), 16);
+    s.NoteOff(60);
+    Run(s, 64);
+    OXO_EXPECT_EQ(held(), 8);
+}
+
+// Stealing a sounding voice must not click: its filter / output state and a
+// free-running sub keep going (the new note's envelope starts from there).
+OXO_TEST(StealingASoundingVoiceDoesNotClick) {
+    Synth s;
+    s.SetSampleRate(48000);
+    s.SetParam(kPolyphony, 1);
+    s.SetParam(kSubGain, 127);
+    s.SetParam(kSubOctave, 1);
+    s.SetParam(kOscMix, 0);
+    s.SetParam(kOsc1Shape, 0);
+    s.SetParam(kAmpAttack, 40);
+    s.SetParam(kAmpSustain, 127);
+    s.SetParam(kLfo1On, 0);
+    s.SetParam(kLfo2On, 0);
+    s.SetParam(kFilterFreq, 127);
+    s.SetParam(kFilterAmount, 64);
+    std::vector<float> x(48002), r(48002);
+    s.NoteOn(48, 100);
+    s.Render(x.data(), r.data(), 24002);
+    s.NoteOn(48, 100); // steals the only voice
+    s.Render(x.data() + 24002, r.data(), 24000);
+    // a click = a jump off the waveform's curve: large second difference
+    const auto kink = [&](int from, int to) {
+        float k = 0;
+        for (int i = from; i < to; ++i) k = std::max(k, std::fabs(x[size_t(i)] - 2 * x[size_t(i - 1)] + x[size_t(i - 2)]));
+        return k;
+    };
+    OXO_EXPECT(kink(24002, 24002 + 256) < 2 * kink(12000, 24000));
+}
+
 // (measured) a mono retrigger restarts the oscillator phases (osc phase > 0).
 OXO_TEST(MonoRetriggerRestartsPhases) {
     const auto setup = [](Synth &s) {

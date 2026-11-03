@@ -497,7 +497,9 @@ original AU; keeps both renders for listening).
   don't (inaudible), but null tests need note times on that grid
   (`check_unison.grid`).
 - Voice allocation: ROUND ROBIN (next idle voice after the last started).
-  Stealing: the oldest RELEASED voice first, then the oldest held one.
+  Stealing: the oldest RELEASED voice first, then the oldest held one
+  (age = start time in samples). A stolen voice still sounding keeps its
+  filter / output state and a free-running sub (resetting them clicked).
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
   patches). Stuck-free rules (fuzz test
   `RandomPatchSwitchesUnderHeldKeysLeaveNoStuckNote`): the mono key stack
@@ -540,7 +542,9 @@ original AU; keeps both renders for listening).
   + ln(env)/ln(1e4) (FM offset falls LINEARLY to 0 at 9.2 taus).
 - Unison (`check_unison.py`: every knob + interactions vs the original,
   nulls ≤ -20 dB where phases are deterministic): a note takes min(voices,
-  polyphony) voices (round robin); a voice's PLACE p is FIXED by its slot,
+  polyphony) voices (round robin) but never steals from a note started in
+  the same 16-sample sub-block (a chord over the polyphony keeps its FIRST
+  notes, the rest of a stack is dropped); a voice's PLACE p is FIXED by its slot,
   p = slot % voices (a stack may hold a place twice): detune t·D (t =
   2p/(N-1) - 1, D table), pan spread t·(v-64)/64 (below 64 the LOWEST
   voice goes RIGHT), odd p + (pitch-24) semis; no level compensation. The
@@ -576,6 +580,8 @@ original AU; keeps both renders for listening).
 ## Measurement methods (reuse them)
 
 - Reference = the original AU via `build/s1ref/s1ref` (x86_64, Rosetta).
+  Simultaneous events keep the job's order (stable sort since 2026-11-03;
+  older corpus renders may have chord notes / offs-vs-ons reordered).
   ONE PROCESS PER RENDER (`s1.render_many` does it, parallel): a 2nd
   instance in a process starts with other osc phases / PRNG; the 1st is
   bit-exact repeatable. The 0.25 s pre-roll counts (LFOs free-run in it).

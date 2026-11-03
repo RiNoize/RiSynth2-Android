@@ -72,6 +72,7 @@ public:
         velocity_ = velocity;
         age_ = age;
         gate_ = true;
+        const bool stolen = amp_.Active();
         amp_.Configure(sampleRate_, p[kAmpAttack], p[kAmpDecay], p[kAmpSustain], p[kAmpRelease]);
         amp_.Trigger();
         // (measured) the filter env shares the amp env's laws
@@ -82,13 +83,19 @@ public:
         modEnv_.Configure(sampleRate_, p[kModEnvAttack], p[kModEnvDecay], 0, 0, Adsr::SustainLaw::Linear);
         modEnv_.Trigger();
         unisonPhase_ = unisonPhase;
-        StartPhases(p, rng);
-        postZ_ = postY_ = 0;
-        filter_.Reset();
+        StartPhases(p, rng, !stolen);
+        // A stolen voice still sounding keeps its filter / output state:
+        // zeroing them under a live signal clicks (the original doesn't).
+        if (!stolen) {
+            postZ_ = postY_ = 0;
+            filter_.Reset();
+        }
     }
 
     // Oscillator start phases (Start; a mono retrigger restarts them too).
-    void StartPhases(const PatchValues &p, Rng &rng) {
+    // relockSub: false = a free-running (osc phase 0) sub keeps its phase
+    // (re-locking it on a stolen, sounding voice clicks).
+    void StartPhases(const PatchValues &p, Rng &rng, bool relockSub = true) {
         // (measured) osc phase 0 = free: the slot's phases carry on (InitSlot);
         // > 0 = osc1 starts at phase 0, osc2 at (v - 1) / 126 of half a cycle
         // (127 = 180 degrees), both shifted by the unison phase.
@@ -102,9 +109,11 @@ public:
         }
         // (measured) the sub runs phase-locked to osc1: its harmonic at osc1's
         // pitch is in phase with osc1's fundamental.
-        const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
-        subPhase_ = osc1Phase_ * subRatio;
-        for (int i = 0; i < kDetuneOscs; ++i) subDetunePhase_[i] = detunePhase_[i] * subRatio;
+        if (relockSub || p[kOscPhase] > 0) {
+            const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
+            subPhase_ = osc1Phase_ * subRatio;
+            for (int i = 0; i < kDetuneOscs; ++i) subDetunePhase_[i] = detunePhase_[i] * subRatio;
+        }
         noiseRng_.state = rng.NextU32() | 1u;
     }
 

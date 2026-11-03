@@ -371,6 +371,7 @@ typedef struct {
     double time;
     UInt32 status, d1, d2; // status 0 = AU parameter d1 = value (timed `pt`)
     double value;
+    int seq; // insertion order: equal times keep the job's order (qsort is not stable)
 } Event;
 
 typedef struct {
@@ -390,8 +391,9 @@ typedef struct {
 } Job;
 
 static int eventCmp(const void *a, const void *b) {
-    double ta = ((const Event *)a)->time, tb = ((const Event *)b)->time;
-    return ta < tb ? -1 : ta > tb;
+    const Event *ea = a, *eb = b;
+    if (ea->time != eb->time) return ea->time < eb->time ? -1 : 1;
+    return ea->seq - eb->seq;
 }
 
 static void writeWav(const char *path, float *const ch[2], size_t frames, double sr) {
@@ -491,7 +493,8 @@ static void runJob(Job *job) {
 
 static void addEvent(Job *job, double t, UInt32 status, UInt32 d1, UInt32 d2) {
     if (job->nEvents >= (int)(sizeof job->events / sizeof job->events[0])) die("too many events", -1);
-    job->events[job->nEvents++] = (Event){t, status, d1, d2, 0.0};
+    job->events[job->nEvents] = (Event){t, status, d1, d2, 0.0, job->nEvents};
+    job->nEvents++;
 }
 
 static void resetJob(Job *job) {

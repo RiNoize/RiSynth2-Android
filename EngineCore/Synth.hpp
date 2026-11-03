@@ -166,9 +166,9 @@ private:
         const double from = lastPitch_;
         lastPitch_ = key;
         if (!values_[kUnisonOn]) {
-            Voice &v = AllocateVoice();
+            Voice &v = *AllocateVoice();
             if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
-            v.Start(key, velocity, values_, rng_, ++ageCounter_);
+            v.Start(key, velocity, values_, rng_, now_);
             return;
         }
         // (measured) unison: N voices evenly over +-D cents, pan spread
@@ -177,7 +177,7 @@ private:
         const double d = tables::kUnisonDetuneCents[values_[kUnisonDetune]];
         // (measured, check_unison.py) the lowest voice goes right below 64
         const double spread = (values_[kUnisonPan] - 64) / 64.0;
-        const uint64_t age = ++ageCounter_;
+        const uint64_t age = now_;
         const Rng shared = rng_; // the stacked voices share one noise sequence
         // (measured) unison phase shift (osc phase > 0; with 0 the slots'
         // phases carry on): the k-th voice started starts kPhaseDeg[k] * v /
@@ -185,13 +185,17 @@ private:
         static constexpr double kPhaseDeg[8] = {0, 62.2, 356.4, 60.5, 317.0, 281.5, 136.3, 303.1};
         const double shift = values_[kUnisonPhase] / 127.0 / 360.0;
         // (measured, check_unison.py) a note takes min(voices, polyphony)
-        // voices (round robin as usual); a voice's place in the stack
-        // (detune, pan, odd = pitch) is FIXED by its slot: slot % voices (a
-        // stack may hold a place twice); the phase shift follows k.
+        // voices (round robin as usual) but never steals from a note started
+        // at the same time (a chord keeps its FIRST notes; the rest of the
+        // stack is dropped); a voice's place in the stack (detune, pan, odd =
+        // pitch) is FIXED by its slot: slot % voices (a stack may hold a
+        // place twice); the phase shift follows k.
         const int sounding = std::min(n, std::clamp<int>(values_[kPolyphony], 1, kMaxVoices));
         for (int k = 0; k < sounding; ++k) {
             Rng voice = shared;
-            Voice &v = AllocateVoice();
+            Voice *slot = AllocateVoice(true);
+            if (!slot) break;
+            Voice &v = *slot;
             const int i = lastVoice_ % n;
             const double t = n > 1 ? 2.0 * i / (n - 1) - 1.0 : 0.0;
             if (porta && !values_[kPortaAuto] && from >= 0) v.SetGlideFrom(from);
@@ -417,6 +421,7 @@ public:
             }
         }
         volume_ = volumeTarget_;
+        now_ += uint64_t(std::max(frames, 0));
     }
 
     // Master volume (kVolumeParamId, not a patch parameter): survives Reset.
@@ -475,7 +480,10 @@ private:
         return step;
     }
 
-    Voice &AllocateVoice() {
+    // keepSameTime (unison): voices started at the same time (same 16-sample
+    // sub-block, the original's event grid) can't be stolen; nullptr when
+    // nothing else is left.
+    Voice *AllocateVoice(bool keepSameTime = false) {
         // Round robin like Synth1 (its voice squares): the next idle voice
         // after the last one started. (measured, measure_steal.py) at the
         // limit a RELEASED voice goes first (oldest of those), only then the
@@ -485,11 +493,12 @@ private:
         for (int k = 1; k <= limit && !pick; ++k) {
             Voice &v = voices_[(lastVoice_ + k) % limit];
             if (!v.Active()) pick = &v;
+            else if (keepSameTime && v.Age() / 16 == now_ / 16) continue; // the original's 16-sample event grid
             else if (Voice *&steal = v.Gate() ? oldest : released; !steal || v.Age() < steal->Age()) steal = &v;
         }
         if (!pick) pick = released ? released : oldest;
-        lastVoice_ = int(pick - voices_.data());
-        return *pick;
+        if (pick) lastVoice_ = int(pick - voices_.data());
+        return pick;
     }
 
     static constexpr int kLfoBlock = 64;
@@ -524,7 +533,7 @@ private:
     int arpCount_ = 0, arpStep_ = -1, arpDir_ = 1, arpVelocity_ = 100, arpPlaying_ = -1;
     int arpCountdown_ = 0, arpGateCountdown_ = 0;
     double arpAccum_ = 0;
-    uint64_t ageCounter_ = 0;
+    uint64_t now_ = 0; // samples rendered: a voice's age = its start time
 };
 
 } // namespace oxo::s2
