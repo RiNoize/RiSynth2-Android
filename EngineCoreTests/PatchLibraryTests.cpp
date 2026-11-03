@@ -20,6 +20,20 @@ fs::path FreshDir(const char *name) {
 }
 } // namespace
 
+// Old banks: Shift-JIS (Japanese) or Windows-1252 names decode to UTF-8.
+OXO_TEST(LegacyNamesDecodeToUtf8) {
+    OXO_EXPECT(LegacyToUtf8("Plain Name") == "Plain Name");
+    OXO_EXPECT(LegacyToUtf8("Caf\xC3\xA9") == "Caf\xC3\xA9");               // UTF-8 stays
+    OXO_EXPECT(LegacyToUtf8("P\xE9tale") == "P\xC3\xA9tale");               // 1252 e-acute
+    OXO_EXPECT(LegacyToUtf8("Don\x92t") == "Don\xE2\x80\x99t");              // 1252 apostrophe
+    OXO_EXPECT(LegacyToUtf8("40\xB0") == "40\xC2\xB0");                      // degree sign
+#if defined(__APPLE__)
+    OXO_EXPECT(LegacyToUtf8("\x83\x78\x81\x5B\x83\x58") == "\xE3\x83\x99\xE3\x83\xBC\xE3\x82\xB9"); // ベース
+    OXO_EXPECT(LegacyToUtf8("\x8C\xB7\x89\xB9") == "\xE5\xBC\xA6\xE9\x9F\xB3"); // 弦音 (kanji only)
+    OXO_EXPECT(LegacyToUtf8("\xB2\xDD\xC4\xDB") == "\xEF\xBD\xB2\xEF\xBE\x9D\xEF\xBE\x84\xEF\xBE\x9B");   // ｲﾝﾄﾛ
+#endif
+}
+
 OXO_TEST(SlotNumbersFollowSynth1FileNames) {
     OXO_EXPECT_EQ(SlotFromFileName("001.sy1"), 0);
     OXO_EXPECT_EQ(SlotFromFileName("128.sy1"), 127);

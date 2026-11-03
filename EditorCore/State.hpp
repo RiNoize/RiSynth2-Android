@@ -68,6 +68,7 @@ inline bool DecodeState(const uint8_t *data, size_t size, PluginState &state) {
     state.theme.assign(reinterpret_cast<const char *>(data) + at, themeLength);
     at += themeLength;
     state.patch = s2::ParseSy1(std::string_view(reinterpret_cast<const char *>(data) + at, size - at));
+    state.patch.name = s2::LegacyToUtf8(state.patch.name);
     return true;
 }
 

@@ -16,6 +16,7 @@
 // (SeedStarterBanks).
 
 #include "Sy1Codec.hpp"
+#include "TextEncoding.hpp"
 
 #include <zlib.h>
 
@@ -133,8 +134,8 @@ inline std::string Lower(std::string s) {
     return s;
 }
 
-// Valid UTF-8 passes through; legacy Latin-1 / Shift-JIS bytes (old patch and
-// zip entry names) become `repl`.
+// Valid UTF-8 passes through, invalid bytes become `repl` (decode legacy
+// names first: LegacyToUtf8).
 inline std::string Utf8Clean(const std::string &s, char repl) {
     std::string o;
     for (size_t i = 0; i < s.size();) {
@@ -161,7 +162,7 @@ inline std::string JsonString(const std::string &s) {
 // A file / folder name we create: one path component, valid UTF-8, no
 // leading dot.
 inline std::string SafeName(std::string name) {
-    name = Utf8Clean(name, '_');
+    name = Utf8Clean(LegacyToUtf8(name), '_');
     for (char &c : name)
         if (c == '/' || c == '\\' || c == ':' || static_cast<unsigned char>(c) < 0x20) c = '-';
     while (!name.empty() && (name.front() == '.' || name.front() == ' ')) name.erase(name.begin());
@@ -269,7 +270,7 @@ public:
         std::ifstream f(e.path(), std::ios::binary);
         if (!f) return false;
         std::getline(f, name);
-        name = name.substr(0, name.find('\r'));
+        name = LegacyToUtf8(name.substr(0, name.find('\r')));
         std::lock_guard<std::mutex> lock(mutex_);
         names_[key] = {size, time, name};
         return true;
@@ -338,6 +339,7 @@ public:
         const std::string file = SlotFile(bank, slot);
         if (file.empty() || !ReadTextFile(file, text)) return false;
         out = ParseSy1(text);
+        out.name = LegacyToUtf8(out.name);
         return true;
     }
 

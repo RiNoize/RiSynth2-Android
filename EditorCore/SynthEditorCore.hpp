@@ -103,7 +103,9 @@ public:
     bool LoadPatchFile(const std::string &path) {
         std::string text;
         if (!s2::ReadTextFile(path, text)) return false;
-        ApplyPatch(s2::ParseSy1(text));
+        s2::Sy1Patch patch = s2::ParseSy1(text);
+        patch.name = s2::LegacyToUtf8(patch.name);
+        ApplyPatch(patch);
         return true;
     }
     bool SavePatchFile(const std::string &path) {

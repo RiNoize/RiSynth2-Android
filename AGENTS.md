@@ -79,6 +79,7 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   `ParamFormat.hpp` (value labels; `DisplayName` = LCD name, effect knobs
   per effect type), `MidiLearn.hpp` (learn table, CC scaling, JSON),
   `PatchLibrary.hpp` (banks, zip reader, import, `PatchManager`),
+  `TextEncoding.hpp` (legacy names: Shift-JIS / Windows-1252 → UTF-8),
   `Jobs.hpp` (s1ref job format → our engine, WAV writer).
 - `EditorCore/` portable editor services: `OxoSynth2Bridge.h` (C hooks
   between C++ and the Swift editor), `SynthEditorCore.hpp` (base of the
@@ -658,5 +659,4 @@ original AU; keeps both renders for listening).
   254 short near the extremes.
 - iPad AUv3: built and harness-tested, device testing / App Store release
   pending.
-- Known GUI gaps: loading a patch = 99 host undo steps in some DAWs; old
-  Latin-1 / Shift-JIS patch names show '?' in the browser.
+- Known GUI gaps: loading a patch = 99 host undo steps in some DAWs.
