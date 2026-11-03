@@ -51,20 +51,23 @@ public:
                 stage_ = Stage::Decay;
             }
             break;
+        // (measured, measure_env_tail.py) decay / release aim kAim BELOW
+        // their target and stop on it: they land in finite time (a decay
+        // to sustain 0 = silent but still held; a release = the end)
         case Stage::Decay:
-            level_ += (sustain_ - level_) * decayCoef_;
-            if (level_ < kSilence) level_ = 0; // (measured) silent but still held
+            level_ += (sustain_ - kAim - level_) * decayCoef_;
+            if (level_ <= sustain_) level_ = sustain_;
             break;
         case Stage::Release:
-            level_ -= level_ * releaseCoef_;
-            if (level_ < kSilence) Reset();
+            level_ += (-kAim - level_) * releaseCoef_;
+            if (level_ <= 0) Reset();
             break;
         }
         return level_;
     }
 
 private:
-    static constexpr double kSilence = 4.95e-4; // (measured, measure_noise.py) -66 dB = 7.61 tau
+    static constexpr double kAim = 1.0 / 2048;
 
     Stage stage_ = Stage::Idle;
     double level_ = 0;

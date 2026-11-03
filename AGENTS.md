@@ -519,8 +519,10 @@ original AU; keeps both renders for listening).
   Poly: a key pressed again while held releases its voice (stack), the
   note starts on a fresh one.
 - VOICE END (`measure_noise.py`, noise position = slot sample counter):
-  the env ends under -66 dB (`kSilence` 4.95e-4, release AND decay; a
-  decayed held note stays allocated, silent), the voice at the first
+  decay / release aim 1/2048 BELOW their target and stop on it
+  (`measure_env_tail.py`: the tail falls faster than a pure exponential,
+  -60 dB ~7 % earlier; a decay to sustain 0 = silent but still held), the
+  release end = the env end, the voice at the first
   256-sample boundary after (host block relative, `Synth::BeginBlock`).
   The original then leaves a -108 dB residue for 8960 samples (not
   modelled).
