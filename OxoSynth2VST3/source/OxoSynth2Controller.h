@@ -33,6 +33,7 @@ public:
     void PerformEdit(int id, int32_t value) override;
     void EndEdit(int id) override { endEdit(Steinberg::Vst::ParamID(id)); }
     void PatchLoading() override;
+    void GroupEdit(bool begin) override { begin ? startGroupEdit() : finishGroupEdit(); }
     void PatchNameChanged(const std::string &name) override;
     void ProgramChanged(const s2::LibraryProgram &program) override;
     void ThemeChanged(const std::string &theme) override;

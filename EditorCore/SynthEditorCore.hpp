@@ -28,6 +28,7 @@ public:
     virtual void PerformEdit(int id, int32_t value) = 0; // host-visible, inside Begin/End
     virtual void EndEdit(int id) = 0;
     virtual void PatchLoading() {}                        // before a load's edits: the DSP empties its delay, fades the switch
+    virtual void GroupEdit(bool /*begin*/) {}             // a load's 99 edits = one host undo step where supported
     virtual void PatchNameChanged(const std::string &) {} // e.g. tell the processor
     virtual void ProgramChanged(const s2::LibraryProgram &) {} // ditto (the state chunk keeps it)
     virtual void ThemeChanged(const std::string &) {}           // ditto
@@ -89,11 +90,13 @@ public:
     // undoable in hosts that record parameter edits).
     void ApplyPatch(const s2::Sy1Patch &patch) {
         PatchLoading();
+        GroupEdit(true);
         for (int i = 0; i < s2::kParamCount; ++i) {
             BeginEdit(i);
             PerformEdit(i, s2::ClampValue(i, patch.values[i]));
             EndEdit(i);
         }
+        GroupEdit(false);
         patchColor_ = patch.color;
         SetPatchName(patch.name);
         SetProgram({});

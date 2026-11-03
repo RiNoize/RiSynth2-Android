@@ -659,4 +659,6 @@ original AU; keeps both renders for listening).
   254 short near the extremes.
 - iPad AUv3: built and harness-tested, device testing / App Store release
   pending.
-- Known GUI gaps: loading a patch = 99 host undo steps in some DAWs.
+- Patch loads are one VST3 group edit (`SynthEditorCore::GroupEdit`: one
+  undo step in hosts implementing IComponentHandler2); AU hosts may still
+  record 99 steps (no AU equivalent).
