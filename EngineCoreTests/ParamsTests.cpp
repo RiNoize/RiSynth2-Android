@@ -24,6 +24,20 @@ OXO_TEST(InitPatchInRangeAndRoundTrips) {
     OXO_EXPECT_EQ(p.color, std::string("blue"));
 }
 
+// The factory bank's 001 is the same INIT (shipped file vs code copy).
+OXO_TEST(FactoryInitFileMatchesInitPatch) {
+    const std::string path = std::string(OXO_TESTS_DIR) + "/../Shared/Resources/Synth2 Factory/001.sy1";
+    std::FILE *f = std::fopen(path.c_str(), "r");
+    OXO_EXPECT(f != nullptr);
+    if (!f) return;
+    std::string text;
+    for (int c; (c = std::fgetc(f)) != EOF;) text += char(c);
+    std::fclose(f);
+    const Sy1Patch p = ParseSy1(text);
+    for (int i = 0; i < kParamCount; ++i) OXO_EXPECT_EQ(p.values[i], kInitPatchValues[i]);
+    OXO_EXPECT_EQ(p.name, std::string("INIT"));
+}
+
 OXO_TEST(ParamsNormalizedRoundTrip) {
     for (int i = 0; i < kParamCount; ++i)
         for (int32_t v = kParams[i].min; v <= kParams[i].max; v += std::max(1, (kParams[i].max - kParams[i].min) / 300))
