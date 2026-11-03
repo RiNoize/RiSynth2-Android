@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 
@@ -43,6 +44,13 @@ public:
     // routing offsets, see ApplyRouting).
     void SetParam(int id, int32_t value) {
         if (id < 0 || id >= kParamCount) return;
+        if (switch_ == Switch::Out) { // patch switch: lands at silence
+            pending_[id] = value;
+            pendingMask_[size_t(id)] = true;
+            switchQuiet_ = 0;
+            return;
+        }
+        if (switch_ == Switch::Hold) switchQuiet_ = 0;
         const bool arpWas = values_[kArpOn] != 0;
         base_[id] = values_[id] = ClampValue(id, value);
         ApplyRouting();
@@ -383,6 +391,16 @@ public:
     // so the switch's transient doesn't ring in a long feedback.
     void ClearDelay() { delay_.Clear(); }
 
+    // A patch switch (browser / editor load, BEFORE its parameter edits):
+    // the voice mix (pre effects) fades out, the edits made meanwhile land
+    // at silence with the voices' filters cleared (no half-switched or
+    // resonating states), then it fades back in. Notes keep playing.
+    void BeginPatchChange() {
+        if (switch_ == Switch::None || switch_ == Switch::In) switch_ = Switch::Out;
+        switchQuiet_ = 0;
+    }
+    bool PatchChanging() const { return switch_ != Switch::None; }
+
     void Render(float *left, float *right, int frames) {
         std::fill(left, left + frames, 0.0f);
         std::fill(right, right + frames, 0.0f);
@@ -403,6 +421,7 @@ public:
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
             for (Voice &v : voices_) v.Render(left + pos, right + pos, n, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+            if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
             toArp = ArpAdvance(n);
         }
         // (measured, measure_fx_order.py) voices -> effect -> EQ -> delay -> chorus
@@ -480,6 +499,38 @@ private:
         return step;
     }
 
+    // Patch switch fade on one render chunk: ramp x (gain = smoothstep(x)),
+    // stage changes at chunk ends.
+    void SwitchFade(float *left, float *right, int n) {
+        static constexpr double kOutSec = 0.025, kInSec = 0.25, kQuietSec = 0.01, kMaxHoldSec = 0.15;
+        const double step = switch_ == Switch::Out ? -1.0 / (kOutSec * sampleRate_)
+                            : switch_ == Switch::In ? 1.0 / (kInSec * sampleRate_) : 0.0;
+        for (int i = 0; i < n; ++i) {
+            switchX_ = std::clamp(switchX_ + step, 0.0, 1.0);
+            const float g = float(switchX_ * switchX_ * (3 - 2 * switchX_));
+            left[i] *= g;
+            right[i] *= g;
+        }
+        switchQuiet_ += n;
+        if (switch_ == Switch::Out && switchX_ <= 0) {
+            switch_ = Switch::Hold;
+            switchHeld_ = 0;
+            for (int i = 0; i < kParamCount; ++i)
+                if (pendingMask_[size_t(i)]) SetParam(i, pending_[i]);
+            pendingMask_.reset();
+        } else if (switch_ == Switch::Hold) {
+            switchHeld_ += n;
+            if ((switchQuiet_ >= kQuietSec * sampleRate_ && switchHeld_ >= kQuietSec * sampleRate_) ||
+                switchHeld_ >= kMaxHoldSec * sampleRate_) {
+                for (Voice &v : voices_) v.ClearFilters();
+                cutoff_ = cutoffTarget_ = values_[kFilterFreq]; // no knob glide across a switch
+                switch_ = Switch::In;
+            }
+        } else if (switch_ == Switch::In && switchX_ >= 1) {
+            switch_ = Switch::None;
+        }
+    }
+
     // keepSameTime (unison): voices started at the same time (same 16-sample
     // sub-block, the original's event grid) can't be stolen; nullptr when
     // nothing else is left.
@@ -534,6 +585,11 @@ private:
     int arpCountdown_ = 0, arpGateCountdown_ = 0;
     double arpAccum_ = 0;
     uint64_t now_ = 0; // samples rendered: a voice's age = its start time
+    enum class Switch { None, Out, Hold, In } switch_ = Switch::None; // patch switch fade
+    double switchX_ = 1;
+    int64_t switchQuiet_ = 0, switchHeld_ = 0;
+    PatchValues pending_{};
+    std::bitset<kParamCount> pendingMask_;
 };
 
 } // namespace oxo::s2

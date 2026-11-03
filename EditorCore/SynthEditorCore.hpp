@@ -27,7 +27,7 @@ public:
     virtual void BeginEdit(int id) = 0;
     virtual void PerformEdit(int id, int32_t value) = 0; // host-visible, inside Begin/End
     virtual void EndEdit(int id) = 0;
-    virtual void PatchLoading() {}                        // before a load's edits: the DSP empties its delay
+    virtual void PatchLoading() {}                        // before a load's edits: the DSP empties its delay, fades the switch
     virtual void PatchNameChanged(const std::string &) {} // e.g. tell the processor
     virtual void ProgramChanged(const s2::LibraryProgram &) {} // ditto (the state chunk keeps it)
     virtual void ThemeChanged(const std::string &) {}           // ditto

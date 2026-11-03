@@ -224,6 +224,39 @@ OXO_TEST(StealingASoundingVoiceDoesNotClick) {
     OXO_EXPECT(kink(24002, 24002 + 256) < 2 * kink(12000, 24000));
 }
 
+// A patch switch fades the voices out, lands the new values at silence and
+// fades back in; held notes keep playing.
+OXO_TEST(PatchSwitchFadesWithoutCuttingNotes) {
+    Synth s;
+    s.SetSampleRate(48000);
+    s.SetParam(kAmpSustain, 127);
+    s.NoteOn(60, 100);
+    Run(s, 4800);
+    PatchValues next = DefaultValues();
+    next[kFilterRes] = 120;
+    next[kFilterType] = 3;
+    next[kAmpSustain] = 127;
+    s.BeginPatchChange();
+    s.SetPatch(next);
+    OXO_EXPECT(s.Param(kFilterRes) != 120); // deferred until silent
+    std::vector<float> l(240), r(240);
+    float quietest = 1;
+    for (int b = 0; b < 200 && s.PatchChanging(); ++b) { // 5 ms blocks
+        s.Render(l.data(), r.data(), 240);
+        float e = 0;
+        for (float x : l) e = std::max(e, std::fabs(x));
+        quietest = std::min(quietest, e);
+    }
+    OXO_EXPECT(!s.PatchChanging());
+    OXO_EXPECT(quietest < 1e-6f);
+    OXO_EXPECT_EQ(s.Param(kFilterRes), 120);
+    OXO_EXPECT_EQ(s.GatedVoices(), 1);
+    s.Render(l.data(), r.data(), 240);
+    float e = 0;
+    for (float x : l) e = std::max(e, std::fabs(x));
+    OXO_EXPECT(e > 0.01f);
+}
+
 // (measured) a mono retrigger restarts the oscillator phases (osc phase > 0).
 OXO_TEST(MonoRetriggerRestartsPhases) {
     const auto setup = [](Synth &s) {

@@ -191,7 +191,10 @@ void OxoSynth2Processor::applyParameter(Vst::ParamID id, double normalized, int3
 tresult PLUGIN_API OxoSynth2Processor::process(Vst::ProcessData &data) {
     using Point = TimedInput;
     if (panic_.exchange(false)) synth_.Panic();
-    if (clearDelay_.exchange(false)) synth_.ClearDelay();
+    if (clearDelay_.exchange(false)) { // a patch load, before its parameter edits
+        synth_.ClearDelay();
+        synth_.BeginPatchChange();
+    }
     if (pending_.exchange(false)) {
         for (int i = 0; i < s2::kParamCount; ++i) synth_.SetParam(i, values_[i].load());
         synth_.SetVolume(volume_.load());

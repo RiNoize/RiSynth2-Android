@@ -114,7 +114,10 @@ public:
 
     void ApplyDirty() {
         if (panic_.exchange(false, std::memory_order_acquire)) synth_.Panic();
-        if (clearDelay_.exchange(false, std::memory_order_acquire)) synth_.ClearDelay();
+        if (clearDelay_.exchange(false, std::memory_order_acquire)) { // a patch load, before its edits
+            synth_.ClearDelay();
+            synth_.BeginPatchChange();
+        }
         if (volumeDirty_.exchange(false, std::memory_order_acquire)) synth_.SetVolume(volume_.load(std::memory_order_relaxed));
         for (int w = 0; w < 2; ++w) {
             uint64_t bits = dirty_[size_t(w)].exchange(0, std::memory_order_acquire);

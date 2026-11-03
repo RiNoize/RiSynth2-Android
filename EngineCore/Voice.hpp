@@ -140,6 +140,11 @@ public:
         filterEnv_.ReleaseNote();
     }
     void Kill() { amp_.Reset(); }
+    // Filter / output state cleared (a patch switch, at silence).
+    void ClearFilters() {
+        filter_.Reset();
+        postZ_ = postY_ = 0;
+    }
 
     bool Active() const { return amp_.Active(); }
     bool Gate() const { return gate_; }
