@@ -92,6 +92,8 @@ def main():
         table("kUnisonDetuneCents", uni_det, "unison: voices spread evenly over +-D cents"),
         table("kSlotOsc1Phase", slot["osc1"], "osc phase 0: initial osc1 phase (cycles) of voice slot 0..31"),
         table("kSlotOsc2Phase", slot["osc2"], "osc phase 0: initial osc2 phase (cycles) of voice slot 0..31"),
+        table("kSlotCopyPhase", [v for row in slot["copies"] for v in row],
+              "osc phase 0: initial osc1 detune copy phases (cycles), [slot 0..31][copy, offsets -7..7]"),
         table("kFilterVelScale", vel_scale, "filter env amount scale per velocity when the velocity switch is on"),
         table("kLpdlW", dl_w, "LPDL stage rate w (rad/s), [res 0,16,..,112,127][cutoff 0,4,..,124]"),
         table("kLpdlK", dl_k, "LPDL feedback k (high-passed at 100 Hz), same grid"),

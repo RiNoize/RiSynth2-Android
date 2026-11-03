@@ -28,7 +28,7 @@ constexpr int NoteEventOffset(int offset) { return offset & ~15; }
 class Synth {
 public:
     Synth() {
-        for (int i = 0; i < kMaxVoices; ++i) voices_[i].InitSlot(i, rng_);
+        for (int i = 0; i < kMaxVoices; ++i) voices_[i].InitSlot(i);
         SetPatch(DefaultValues());
         SetSampleRate(44100.0);
     }

@@ -54,10 +54,10 @@ public:
     // (measured, measure_slot_phase.py) with osc phase 0 the original never
     // resets a voice slot's oscillators: they carry on from the slot's last
     // note (frozen while idle), from per-slot values set at creation.
-    void InitSlot(int slot, Rng &rng) {
+    void InitSlot(int slot) {
         osc1Phase_ = tables::kSlotOsc1Phase[slot % 32];
         osc2Phase_ = tables::kSlotOsc2Phase[slot % 32];
-        for (double &ph : detunePhase_) ph = rng.Unit(); // TODO(measure): the copies' initial phases
+        for (int i = 0; i < kDetuneOscs; ++i) detunePhase_[i] = tables::kSlotCopyPhase[(slot % 32) * kDetuneOscs + i];
     }
 
     // detuneCents / pan (-1..1) / pitchSemis / phase (cycles): this voice's
