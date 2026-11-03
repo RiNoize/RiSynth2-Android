@@ -238,7 +238,8 @@ tresult PLUGIN_API OxoSynth2Processor::process(Vst::ProcessData &data) {
     float *right = data.outputs[0].channelBuffers32[1];
     int32 pos = 0;
     for (const Point &p : points) {
-        const int32 at = std::clamp(p.offset, pos, data.numSamples);
+        const bool note = p.kind == 1 && (p.event.type == Vst::Event::kNoteOnEvent || p.event.type == Vst::Event::kNoteOffEvent);
+        const int32 at = std::clamp(note ? int32(s2::NoteEventOffset(p.offset)) : p.offset, pos, data.numSamples);
         if (at > pos) {
             synth_.Render(left + pos, right + pos, at - pos);
             pos = at;

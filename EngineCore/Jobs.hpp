@@ -97,7 +97,8 @@ inline void Dispatch(Synth &synth, const JobEvent &e) {
 }
 
 // Renders like s1ref: fresh engine, natives applied, silent pre-roll dropped,
-// events at exact sample offsets, fixed 512-frame blocks.
+// events at exact sample offsets (notes on the original's 16-sample grid,
+// NoteEventOffset), fixed 512-frame blocks.
 inline void RenderJob(const Job &job, std::vector<float> &left, std::vector<float> &right) {
     constexpr int kBlock = 512;
     Synth synth;
@@ -123,10 +124,12 @@ inline void RenderJob(const Job &job, std::vector<float> &left, std::vector<floa
     right.assign(total, 0.0f);
     size_t pos = 0, ev = 0;
     while (pos < total) {
-        size_t end = std::min(total, pos + kBlock);
+        const size_t block = pos, end = std::min(total, pos + kBlock);
         while (ev < events.size()) {
             size_t at = size_t(std::llround(events[ev].time * job.sampleRate));
             if (at >= end) break;
+            const int status = events[ev].status & 0xF0;
+            if (status == 0x90 || status == 0x80) at = block + size_t(NoteEventOffset(int(at - block)));
             at = std::max(at, pos);
             if (at > pos) {
                 transport();

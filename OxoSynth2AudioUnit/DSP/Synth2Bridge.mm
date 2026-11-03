@@ -108,8 +108,21 @@ void Synth2Render(void *instance, uint32_t frames, AudioBufferList *output, cons
     inst->ApplyDirty();
 
     uint32_t pos = 0;
+    // note on / off -> the original's 16-sample grid (NoteEventOffset)
+    const auto isNote = [](const AURenderEvent *e) {
+        uint32_t status = 0;
+        if (e->head.eventType == AURenderEventMIDI && e->MIDI.length >= 1) status = e->MIDI.data[0];
+        else if (e->head.eventType == AURenderEventMIDIEventList && e->MIDIEventsList.eventList.numPackets &&
+                 e->MIDIEventsList.eventList.packet[0].wordCount) {
+            const uint32_t w = e->MIDIEventsList.eventList.packet[0].words[0];
+            if ((w >> 28) == 2 || (w >> 28) == 4) status = (w >> 16) & 0xFF;
+        }
+        return (status & 0xF0) == 0x80 || (status & 0xF0) == 0x90;
+    };
     for (const AURenderEvent *e = events; e; e = e->head.next) {
-        const int64_t at = std::clamp<int64_t>(e->head.eventSampleTime - now, pos, frames);
+        int64_t offset = e->head.eventSampleTime - now;
+        if (isNote(e) && offset > 0) offset = oxo::s2::NoteEventOffset(int(std::min<int64_t>(offset, frames)));
+        const int64_t at = std::clamp<int64_t>(offset, pos, frames);
         if (uint32_t(at) > pos) {
             inst->Render(out[0] + pos, out[1] + pos, int(at - pos));
             pos = uint32_t(at);

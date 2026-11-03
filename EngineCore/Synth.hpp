@@ -19,6 +19,12 @@ namespace oxo::s2 {
 
 inline constexpr int kMaxVoices = 32;
 
+// (measured) the original starts / ends notes at the start of their
+// 16-sample sub-block, counted from the host block's start (up to 15
+// samples early); bend / CC stay exact. Offset in the host block -> the
+// offset to play a note on / off at.
+constexpr int NoteEventOffset(int offset) { return offset & ~15; }
+
 class Synth {
 public:
     Synth() {
