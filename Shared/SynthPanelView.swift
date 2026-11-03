@@ -195,7 +195,7 @@ struct SynthPanelView: View {
         .place(0, 4, 770, 26)
     }
 
-    private static let version = UpdateCheck.installed.version
+    private static let version = UpdateCheck.installed.version + (UpdateCheck.installed.build > 0 ? "(\(UpdateCheck.installed.build))" : "")
 
     // MARK: - sections
 
