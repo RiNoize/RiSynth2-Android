@@ -205,12 +205,14 @@ private:
         // (measured) a glide plays in 1/128-octave steps: target + ceil(r / step)
         const double gap = glide_ - note_;
         const double played = note_ + (gap < 0 ? -1 : 1) * kGlideStep * std::ceil(std::abs(gap) / kGlideStep - 1e-9);
-        const double base = played + p[kOscKeyShift] + tuneSemis + bendSemis + unisonSemis_;
+        // bend + LFO pitch: added per sample, quantized (PitchMod)
+        const double base = played + p[kOscKeyShift] + tuneSemis + unisonSemis_;
         const double f1 = NoteHz(base);
-        const double osc2Note = (p[kOsc2KbdTrack] ? base : 57.0 + tuneSemis + bendSemis) +
+        const double osc2Note = (p[kOsc2KbdTrack] ? base : 57.0 + tuneSemis) +
                                 tables::kOsc2PitchSemis[p[kOsc2Pitch]] + tables::kFineCents[p[kOsc2Fine]] / 100.0;
         const double f2 = NoteHz(osc2Note);
-        const int t1 = int(std::lround(base)), t2 = int(std::lround(osc2Note));
+        const int t1 = int(std::lround(base + bendSemis)), t2 = int(std::lround(osc2Note + bendSemis));
+        const double bendCents = bendSemis * 100.0, bendRatio = std::exp2(PitchMod(bendCents) / 1200.0);
         const bool osc1Silent = t1 > 127, osc2Silent = t2 > 127; // (measured) no table above note 127
         const WaveTable &saw1 = tables_->Saw(std::clamp(t1, 0, 127));
         const WaveTable &tri1 = tables_->Triangle(std::clamp(t1, 0, 127));
@@ -304,11 +306,12 @@ private:
         for (int i = 0; i < frames; ++i) {
             // ---- per-sample modulation ----
             const double me = modOn ? modEnv_.Next() * modAmt : 0.0;
-            const double mAll = r[2] ? std::exp2(pitchCents(r[2], i) / 1200.0) : 1.0;
-            const double m2 = r[1] ? std::exp2(pitchCents(r[1], i) / 1200.0) : 1.0;
-            // (measured) mod env -> osc2 pitch: +-60 semitones at env 1
+            const double lfoAll = r[2] ? pitchCents(r[2], i) : 0.0;
+            const double mAll = r[2] ? std::exp2(PitchMod(bendCents + lfoAll) / 1200.0) : bendRatio;
+            const double m2 = r[1] ? std::exp2(PitchMod(bendCents + lfoAll + pitchCents(r[1], i)) / 1200.0) : mAll;
+            // (measured) mod env -> osc2 pitch: +-60 semitones at env 1 (not quantized)
             const double mEnv2 = (modOn && modDest == 0) ? std::exp2(me * 60.0 / 12.0) : 1.0;
-            const double incA = inc1 * mAll, incB = inc2 * mAll * m2 * mEnv2;
+            const double incA = inc1 * mAll, incB = inc2 * m2 * mEnv2;
             double w = width;
             if (r[5]) {
                 const double l = r[5].Signed(i);
@@ -451,6 +454,9 @@ private:
 
     static double Wrap(double ph) { return ph - std::floor(ph); }
     static constexpr double kGlideStep = 12.0 / 128, kGlideOvershoot = 2 * kGlideStep; // semitones
+    // (measured, measure_pitch_mod.py) pitch bend + LFO pitch (cents) play in
+    // 1/128-octave steps, truncated toward 0 (the mod env's pitch does not)
+    static double PitchMod(double cents) { return 9.375 * std::trunc(cents / 9.375); }
 
     void SetNote(int note, bool glide) {
         note_ = note;

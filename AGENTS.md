@@ -488,8 +488,13 @@ original AU; keeps both renders for listening).
   Engine keeps `base_` (patch) and `values_` (played). Init patch: CC1 ->
   lfo1 depth / speed at sens 74. Pressure 0..127 like a CC; pitch bend is
   BIPOLAR v = (bend−8192)/64. Targets whose range is not 0..127 (key shift,
-  bend range, unison pitch) are NOT routed. Not modelled: s1's pitch bend
-  deviates up to ~0.1 semi from linear.
+  bend range, unison pitch) are NOT routed.
+- PITCH MOD RESOLUTION (`measure_pitch_mod.py`): the pitch bend uses its
+  7-bit MSB only (trunc((v−8192)/128), ±63 = ±range); bend + LFO pitch
+  cents are summed and TRUNCATED toward 0 to 1/128-octave steps (9.375
+  cents: slow vibratos and bends are staircases; `Voice::PitchMod`). Fine
+  tune and the mod env's pitch are not quantized; the portamento has its
+  own steps (ceil, relative to the target).
 - Mono / legato: a new note retriggers in mono (new velocity), glides in
   legato; releasing it falls back to the previous held key, mono
   RETRIGGERS there (last velocity), legato does not. A mono retrigger also

@@ -411,7 +411,9 @@ public:
     void Render(float *left, float *right, int frames) {
         std::fill(left, left + frames, 0.0f);
         std::fill(right, right + frames, 0.0f);
-        const double bendSemis = bend_ / 8192.0 * values_[kBendRange];
+        // (measured, measure_pitch_mod.py) only the bend's 7-bit MSB counts:
+        // trunc((v - 8192) / 128) clamped to +-63, / 63 = the full range
+        const double bendSemis = std::clamp(bend_ / 128, -63, 63) / 63.0 * values_[kBendRange];
         int toArp = ArpAdvance(0);
         for (int pos = 0, n = 0; pos < frames; pos += n) {
             n = std::min({kLfoBlock, frames - pos, toArp});
