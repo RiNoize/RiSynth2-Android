@@ -36,7 +36,7 @@ on the Clavia Nord Lead 2; abandoned, its mac AU is x86_64-only and dies
 with Rosetta). Same 99 parameters (same indices), loads `.sy1` patches and
 zip banks, SOUNDS THE SAME (tuned against renders of the original). GUI =
 Synth1's layout, redrawn. MIT, free. Formats: mac VST3 + the SDK's AUv2
-wrapper, iPad AUv3 (not released yet). Windows / Linux: welcome as ports.
+wrapper, iPad AUv3 (App Store). Windows / Linux: welcome as ports.
 Stack: Steinberg VST3 SDK + header-only C++ engine + SwiftUI editor (no
 JUCE). Official builds ("Oxo Synth2", oxo-music.com / App Store) come from
 tagged commits of this repo.
@@ -103,14 +103,13 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   `WheelFeel`), `SynthTooltip.swift`, `SynthUpdateCheck.swift`,
   `Resources/` (bundled banks, see Patch library).
 - `OxoSynth2.xcodeproj` (synchronized folders): `OxoSynth2/` = iPad app,
-  ONLY a screen saying "open it in a host" + version (copied from Oxo
-  Sample's app minus the IAP): no engine, no library (the plugin's browser
-  manages it; an app-side import confused users), no app group, no "Open
-  in" document types; it keeps the imported `.sy1` UTI declaration
-  + `ITSAppUsesNonExemptEncryption` NO; app and appex each carry a
+  ONLY a screen saying "open it in a host" + version, compiles only its
+  own folder: no engine, no library (the plugin's browser manages it; an
+  app-side import confused users), no app group, no "Open in" document
+  types; it keeps the imported `.sy1` UTI declaration +
+  `ITSAppUsesNonExemptEncryption` NO. App and appex each carry a
   `PrivacyInfo.xcprivacy` (appex: UserDefaults CA92.1 — declare any new
-  required-reason API there);
-  compiles only its own folder. `OxoSynth2AudioUnit/` = AUv3
+  required-reason API there). `OxoSynth2AudioUnit/` = AUv3
   appex (`AudioUnit/OxoSynth2AudioUnit.swift` AUAudioUnit shell,
   `AudioUnitViewController.swift` factory + UI, `DSP/Synth2Instance.hpp`
   engine + mailboxes + learn + SynthEditorCore, `DSP/Synth2Bridge.{h,mm}`
@@ -121,6 +120,9 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   PNG (modes: logo, update, …); `auhost.swift` opens the INSTALLED AUv2
   in-process and snapshots the real editor. Build commands in the files.
 - `tools/app_icon/render.swift` — draws the app icon (command in the file).
+- `tools/prepare_app_store_screenshots.sh` — raw iPad captures dropped in
+  `tools/app_store_screenshots/` (gitignored) → the two App Store sizes +
+  the website's `gallery_N.jpg`.
 - `tools/unify2sy1.py <file|folder>... -o <dir>` — extracts Synth1 patches
   from Unify presets (JUCE "VC2!" XML → base64 `stateInformation` → the
   "Synth1 VST Chunk Data" blob, same word layout as the AU chunk); name =
@@ -136,7 +138,7 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   (download, README "Reference data") and `reference/presets/` are
   gitignored.
 - `docs/images/` — README pictures (`synth2_preview.png` = a copy of the
-  site's gallery_2, shown at 800 px via an HTML `<img width>`).
+  site's gallery_2).
 - `third_party/` — submodules `vst3sdk` v3.8.1_build_84 (MIT) +
   `AudioUnitSDK` 1.4.0 (Apache 2.0); remaining patches: hidden-param
   auwrapper + AudioUnitSDK deployment target.
@@ -236,8 +238,7 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   3 = on) → plain `ClampValue` in ParseSy1.
   Check: `check_legacy.py [--fixture] [bank folders]` (legacy patches +
   random ones of each version vs the original, 0 mismatches) →
-  `EngineCoreTests/legacy_fixture.txt`. Source of the lead: the unofficial
-  v1.12 manual (Z. Nikolic 2011: version history + per-version param table).
+  `EngineCoreTests/legacy_fixture.txt`.
 
 ## Patch library (`EngineCore/PatchLibrary.hpp`, tests PatchLibraryTests.cpp)
 
@@ -317,10 +318,9 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   Delete / Delete bank…]; iPad long press = [Export bank…,] [Delete /
   Delete bank…] (no delete on the factory bank). Rename banks = Finder
   (mac only).
-- SCAN SPEED (big libraries; 150 banks x 128 = 19,200 .sy1 measured): a
-  scan used to open every .sy1 for its name (0.5 s warm, 1.5 s cold on an
-  M-series mac, worse on iPad). `PatchNameCache` (process-wide, path +
-  size + mtime) → only new / changed files are opened (rescan 60 ms);
+- SCAN SPEED (measured on 150 banks x 128 = 19,200 .sy1): `PatchNameCache`
+  (process-wide, path + size + mtime) → only new / changed files are
+  opened for their name (rescan 60 ms vs 0.5–1.5 s uncached);
   `FolderEntries` lists each folder once and keeps the listing's file type
   (no stat per is_directory). Browser open / Refresh / editor open =
   `PatchManager::StartRescan` (worker thread, joined in the destructor;
@@ -344,8 +344,10 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
 - Plumbing: editor → C hooks (`OxoSynth2Bridge.h`) → `SynthEditorCore`
   (patch name / serial, patch files, library, `MakeHooks`; subclassed by
   the VST3 controller and the AUv3 instance); Swift side `HooksSynthHost`.
-  A patch load = begin/perform/endEdit on all 99 params (host-visible) +
-  `OxoPatchName` message (the processor keeps the name for the state
+  A patch load = begin/perform/endEdit on all 99 params (host-visible)
+  inside one group edit (`SynthEditorCore::GroupEdit`: one undo step in
+  hosts implementing IComponentHandler2; AU hosts may still record 99
+  steps, no AU equivalent) + `OxoPatchName` message (the processor keeps the name for the state
   chunk); `patchSerial` tells the UI to refresh. Before its edits a load
   calls `PatchLoading()` (VST3 message "OxoPatchLoad", AUv3 atomic; host
   setState / fullState too) → `Synth::ClearDelay`: the delay's echoes fade
@@ -417,14 +419,15 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   instance = AU fullState key `OxoUIWidthMode` beside the chunk (no chunk
   change, the VST3 has no mode), last choice seeds new instances
   (UserDefaults `oxo.synth2.uiWidthMode`); `SynthModel.uiWidthModeStorage`
-  nil = no toggle (mac). Snapshot modes `ipad` / `ipad-wide`. The AU parameter tree (99
+  nil = no toggle (mac). Snapshot modes `ipad` / `ipad-wide`. Hosting
+  controller `safeAreaRegions = []` + `.ignoresSafeArea(.keyboard)`; every
+  text field sits at the TOP of its dialog so the keyboard never hides it.
+- AUv3 plumbing: the AU parameter tree (99
   params, address = index, NATIVE values) is the host truth; observer →
   `Synth2Instance::SetFromHost` (atomic + dirty bit, applied at the next
   render); UI edits → hooks → instance → AUParameter.setValue (.touch /
   .value / .release); render-time automation is sample-accurate. MIDI 1 +
-  UMP (MIDI 2.0 scaled to 7 bit). Tempo from host blocks. Hosting
-  controller `safeAreaRegions = []` + `.ignoresSafeArea(.keyboard)`; every
-  text field sits at the TOP of its dialog so the keyboard never hides it.
+  UMP (MIDI 2.0 scaled to 7 bit). Tempo from host blocks.
 
 ## Engine facts (MEASURED on the original — do not rediscover)
 
@@ -533,9 +536,8 @@ original AU; keeps both renders for listening).
   -60 dB ~7 % earlier; a decay to sustain 0 = silent but still held), the
   release end = the env end, the voice at the first
   256-sample boundary after (host block relative, `Synth::BeginBlock(frames)`)
-  or the host block's end if sooner (NOT measured: blocks < 256, e.g. AUM
-  at 64 / 128, never reached a boundary and voices never ended — stuck
-  grid + CPU on iPad; assumed: the original's 256 chunks stop at the block end).
+  or the host block's end if sooner (NOT measured, assumed; required:
+  without it host blocks < 256, e.g. AUM at 64 / 128, never end a voice).
   The original then leaves a -108 dB residue for 8960 samples (not
   modelled).
 - Patch changes under HELD KEYS keep the notes playing (hold a note, browse
@@ -567,8 +569,6 @@ original AU; keeps both renders for listening).
   cutoff / FM / pw / pan = the law on the depth-weighted SUM (Σ d·u for
   cutoff / FM, Σ d·lfo for pw / pan; pan unclamped, pw clamps); amp =
   PRODUCT of the per-LFO gains.
-  Probe rule: calibrate cutoff_probe with the SAME timing on the SAME
-  engine.
 - Phase knobs: osc phase (91) 0 = FREE: a voice SLOT's oscillators are
   never reset, they carry on from the slot's last note (frozen while idle)
   from per-slot values set at instance creation (`measure_slot_phase.py` →
@@ -599,7 +599,7 @@ original AU; keeps both renders for listening).
   delay tone (`measure_delay_tone.py`, `kDelayToneHz`): a bilinear one-pole
   in the echo path, 64 = none, < 64 LP 200 Hz·110^(t/63) (22 kHz at 63),
   > 64 HP 10 Hz .. 8 kHz.
-  Arp gate 0 = silent.
+- Arp gate 0 = silent.
 - Chain order (`measure_fx_order.py`): voices → effect → EQ → delay →
   chorus.
 - EQ (`check_eq.py`: every tone / freq / level / Q case within 0.06 dB):
@@ -641,15 +641,18 @@ original AU; keeps both renders for listening).
   patch (osc1 saw, LP12 open, no LFO/fx) + overrides; `render_many(specs,
   ours=False|True)` (ours = s2render), `tone_amp`, `harmonics`, `key_hz`.
   Helpers: `envelope.py`, `pitch.py`, `instfreq.py`, `cutoff_probe.py`
-  (effective cutoff in LP12 knob units), `filtermodels.py`, `fit_*.py`.
+  (effective cutoff in LP12 knob units; calibrate it with the SAME timing
+  on the SAME engine), `filtermodels.py`, `fit_*.py`.
 - IDENTICAL-NOISE TRICK: osc2 noise is the same sequence in every fresh
-  process (and ours is the same sequence now), so H(f) = Pxy/Pxx against a flat reference render (HP12 cut 0)
+  process (ours too), so H(f) = Pxy/Pxx against a flat reference render (HP12 cut 0)
   gives exact complex transfer functions (filters, EQ, delay tone, ...).
   Pulse pw 0 is NOT silence (narrow pulse, it excites LPDL
   self-oscillation): silence osc1 with mix 127 instead.
 - Level tricks: lower an oscillator with mix.
 - Old manuals: EN https://daichilab.sakura.ne.jp/softsynth/synmanu/readmeeng.html,
-  JA (more complete, Shift-JIS) .../synmanu/readme.html.
+  JA (more complete, Shift-JIS) .../synmanu/readme.html; the unofficial
+  v1.12 manual (Z. Nikolic 2011) has the version history + per-version
+  param table (the lead for the legacy conversion).
 - Native value ranges and the AU normalized mapping: reference/meta/
   nativemap.txt; state chunk word layout: tools/s1ref/README.md.
 - Reference corpus (`reference/renders`, download in README): regenerate
@@ -682,10 +685,4 @@ original AU; keeps both renders for listening).
   negative-going wraps, FM >= 0, pulse FM input x2 / bipolar: no gain.
   patch0010 (LPDL + smooth random LFO). A resonant LP24 pulled shut by a
   strongly negative env with a slow attack stays louder in the original.
-  PW: within ~1 / 254 of the original (the old 1.5 / 254 gap was mostly the
-  LFO speed law).
-- iPad AUv3: built and harness-tested, device testing / App Store release
-  pending.
-- Patch loads are one VST3 group edit (`SynthEditorCore::GroupEdit`: one
-  undo step in hosts implementing IComponentHandler2); AU hosts may still
-  record 99 steps (no AU equivalent).
+  PW: within ~1 / 254 of the original.
