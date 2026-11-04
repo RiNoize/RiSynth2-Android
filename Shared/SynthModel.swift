@@ -249,8 +249,9 @@ final class SynthModel: ObservableObject {
             if token != 0 { incomingCC(token & 0x7F) }
         }
         if host.libraryRevision != libraryRevision { // a background scan landed
+            let first = libraryRevision == 0
             loadLibrary()
-            syncProgram()
+            syncProgram(showBank: first) // a rescan keeps the bank being browsed
         }
         let loading = host.libraryScanning
         if loading != libraryLoading { libraryLoading = loading }
@@ -435,6 +436,7 @@ final class SynthModel: ObservableObject {
     /// Opens at once (big libraries take a while to scan).
     func openBrowser(write: Bool = false) {
         refreshLibrary()
+        if let b = loadedBank { currentBank = b }
         showThemes = false
         writing = write
         showBrowser = true
@@ -448,10 +450,11 @@ final class SynthModel: ObservableObject {
 
     /// LCD / browser selection from the host's program (a fresh instance
     /// starts on the library's first patch, sessions restore theirs).
-    private func syncProgram() {
+    /// `showBank` false = the browser stays on the bank it shows.
+    private func syncProgram(showBank: Bool = true) {
         // (no list yet: asking would scan synchronously; the scan's arrival re-syncs)
         if libraryRevision > 0, let p = host.loadedProgram(), p.bank < banks.count {
-            currentBank = p.bank
+            if showBank { currentBank = p.bank }
             currentProgram = p.slot
             loadedBankID = banks[p.bank].id
         } else {
@@ -624,7 +627,7 @@ final class SynthModel: ObservableObject {
     func movePatch(bank: Int, from: Int, to: Int) {
         guard from != to, host.movePatch(bank: bank, from: from, to: to) else { return }
         loadLibrary()
-        syncProgram()
+        syncProgram(showBank: false)
         flash(String(format: "moved %03d -> %03d", from + 1, to + 1))
     }
 

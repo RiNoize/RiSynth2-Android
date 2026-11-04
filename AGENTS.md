@@ -296,6 +296,8 @@ VERSION: MARKETING_VERSION / CURRENT_PROJECT_VERSION in `Identity.xcconfig`
   bank, else the first empty slot.
 - MOVE (browser drag and drop): renames every patch of the bank to its
   `NNN.sy1` in two phases (hidden temp names), an occupied target swaps.
+  The browser stays on the bank it shows (so does a rescan landing; only
+  opening the browser or loading a program selects the loaded bank).
 - COPY (drag a patch onto a BANK row, "+" cursor = `.copy` proposal):
   `PatchManager::Copy` → byte copy into the bank's first free slot as
   `NNN.sy1` (its own bank = a duplicate); hook `copyPatch` → slot, -1 =
