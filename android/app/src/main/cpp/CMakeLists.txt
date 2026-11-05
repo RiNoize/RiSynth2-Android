@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(risynth2 LANGUAGES CXX)
+add_library(risynth2 SHARED NativeEngine.cpp)
+target_compile_features(risynth2 PRIVATE cxx_std_20)
+target_include_directories(risynth2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../../..")
+target_compile_options(risynth2 PRIVATE -O3 -Wall -Wextra -fno-fast-math)
+target_link_options(risynth2 PRIVATE -Wl,-z,max-page-size=16384)
+target_link_libraries(risynth2 PRIVATE aaudio android log)

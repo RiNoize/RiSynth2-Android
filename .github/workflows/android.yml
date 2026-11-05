@@ -1,0 +1,61 @@
+name: Build Android APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: MIDI, import and engine smoke tests
+        run: bash android/test-host.sh
+      - name: Upstream engine regression tests
+        run: make -C EngineCoreTests test CXX=clang++
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Android SDK, NDK and CMake
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Preserve development signing identity between builds
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: risynth2-development-signing-v1
+      - name: Build optimized ARM64 APK and lint
+        working-directory: android
+        run: gradle --no-daemon :app:assembleRelease :app:lintRelease --stacktrace
+      - name: Package APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/RiSynth2-0.1.0-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/RiSynth2-0.1.0-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/RiSynth2-0.1.0-arm64.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiSynth2-0.1.0-arm64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-reports
+          path: android/app/build/reports/
+          if-no-files-found: ignore
