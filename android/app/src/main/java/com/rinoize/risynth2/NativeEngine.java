@@ -5,20 +5,35 @@ package com.rinoize.risynth2;
 final class NativeEngine implements AutoCloseable {
     static { System.loadLibrary("risynth2"); }
     private long handle = create();
+    private boolean streaming;
     synchronized String start(int device, int frames, boolean lowLatency) {
-        return handle == 0 ? "Motor cerrado" : startNative(handle, device, frames, lowLatency);
+        if (handle == 0) return "Motor cerrado";
+        String error = startNative(handle, device, frames, lowLatency);
+        streaming = error.isEmpty();
+        return error;
     }
-    synchronized void stop() { if (handle != 0) stopNative(handle); }
+    synchronized void stop() { streaming = false; if (handle != 0) stopNative(handle); }
     synchronized void midi(int status, int d1, int d2) { if (handle != 0) midiNative(handle, status, d1, d2); }
     synchronized void panic() { if (handle != 0) panicNative(handle); }
-    synchronized void param(int id, int value) { if (handle != 0) paramNative(handle, id, value); }
-    synchronized void volume(int value) { if (handle != 0) volumeNative(handle, value); }
-    synchronized void tempo(int value) { if (handle != 0) tempoNative(handle, value); }
-    synchronized boolean load(String sy1) { return handle != 0 && loadNative(handle, sy1); }
+    // When stopped there is no audio consumer. Drain controls off-line so edits,
+    // imports and session restoration cannot fill the bounded event queue.
+    private void flushStopped() { if (!streaming && handle != 0) stopNative(handle); }
+    synchronized void param(int id, int value) { if (handle != 0) { paramNative(handle, id, value); flushStopped(); } }
+    synchronized void volume(int value) { if (handle != 0) { volumeNative(handle, value); flushStopped(); } }
+    synchronized void tempo(int value) { if (handle != 0) { tempoNative(handle, value); flushStopped(); } }
+    synchronized boolean load(String sy1) {
+        if (handle == 0) return false;
+        boolean accepted = loadNative(handle, sy1); flushStopped(); return accepted;
+    }
     synchronized String save(String name) { return handle == 0 ? "" : saveNative(handle, name); }
     synchronized int[] values() { return handle == 0 ? new int[99] : valuesNative(handle); }
-    synchronized double[] stats() { return handle == 0 ? new double[13] : statsNative(handle); }
-    public synchronized void close() { if (handle != 0) { destroy(handle); handle = 0; } }
+    synchronized double[] stats() {
+        if (handle == 0) return new double[13];
+        double[] result = statsNative(handle);
+        if (result[0] == 0) streaming = false;
+        return result;
+    }
+    public synchronized void close() { streaming = false; if (handle != 0) { destroy(handle); handle = 0; } }
     static native String initialPatch();
     static native String[] parameterInfo();
     private static native long create();
