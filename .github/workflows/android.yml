@@ -41,20 +41,30 @@ jobs:
       - name: Android SDK, NDK and CMake
         run: |
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
-      - name: Preserve development signing identity between builds
+      - name: Restore explicit development signing identity
         uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: risynth2-development-signing-v1
+          path: ~/.android/risynth2-ci
+          key: risynth2-development-signing-v2
+      - name: Prepare and verify development signing key
+        run: bash android/prepare-signing.sh
       - name: Build optimized ARM64 APK and lint
         working-directory: android
         run: gradle --no-daemon :app:assembleRelease :app:lintRelease --stacktrace
+      - name: Build parallel APK without replacing 0.1.0
+        working-directory: android
+        run: |
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk ../dist/RiSynth2-0.2.0-arm64.apk
+          gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
+          cp app/build/outputs/apk/release/app-release.apk ../dist/RiSynth2-0.2.0-preview-arm64.apk
       - name: Package APK
         run: |
-          mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/RiSynth2-0.2.0-arm64.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/RiSynth2-0.2.0-arm64.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/RiSynth2-0.2.0-arm64.apk
+          for apk in dist/*.apk; do
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
+            "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$apk"
+          done
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/RiSynth2-0.2.0-preview-arm64.apk | grep -E "^(package:|application-label:)"
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:

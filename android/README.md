@@ -4,7 +4,11 @@ Independent Android adaptation of the Oxo Synth2 C++ engine, compatible with Syn
 
 ## Install / update
 
-GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.2.0-arm64**. Unpack the ZIP and install the APK over the previous version. Application ID is unchanged. Development signing is cached between CI builds; clearing that cache changes the signing identity. Do not uninstall or clear app data merely to try an update: private banks and settings would be erased. Back up patches before doing either.
+GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.2.0-arm64**. Two APKs are included. **For users of 0.1.0, install `RiSynth2-0.2.0-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
+
+The 0.1.0 workflow attempted to cache a signing-key path that did not exist, so its signing key was not preserved. The normal 0.2.0 APK (`com.rinoize.risynth2`) therefore cannot update that earlier installation in place. Do not uninstall 0.1.0 merely to try it. Preview is the non-destructive alternative and its future updates must retain the Preview package ID.
+
+CI now explicitly provisions/uses `~/.android/risynth2-ci/debug.keystore`, caches that exact directory, and checks `android/dev-signing-cert.sha256` when present. A pinned signer mismatch or missing pinned key stops the build rather than silently rotating it. No private key is uploaded as a build artifact or committed. This remains development signing; a durable owner-managed signing key is needed for production. Do not clear app data: it erases that installation's private banks and settings.
 
 Target: Samsung Galaxy Tab A9 SM-X110, ARM64, Android 13+. The user reported glitches at 512 frames and better results at 1024 in 0.1.0. This release adds measurements, not a claim that those glitches have been fixed. New installations request 1024 frames; an existing explicitly saved setting is kept. Choose **Audio → 1024 frames** for the first comparison. Actual buffer size can differ from the request.
 
@@ -52,7 +56,7 @@ JDK 17, Gradle 8.11.1, Android SDK 35 / build-tools 35.0.0, NDK 27.2.12479018, C
 bash android/test-host.sh
 bash android/test-upstream.sh
 cd android
-gradle :app:assembleRelease :app:lintRelease
+gradle -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
 ```
 
 No Apple/VST SDK submodules are needed. CI provisions the pinned Gradle version and archives the exact tracked sources with each build. No Gradle wrapper binary is included. APK: `android/app/build/outputs/apk/release/app-release.apk`.

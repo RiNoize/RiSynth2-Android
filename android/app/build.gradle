@@ -1,11 +1,14 @@
 plugins { id 'com.android.application' }
 
+def sideBySide = providers.gradleProperty('risynth2SideBySide').orNull == 'true'
+
 android {
     namespace 'com.rinoize.risynth2'
     compileSdk 35
     ndkVersion '27.2.12479018'
     defaultConfig {
-        applicationId 'com.rinoize.risynth2'
+        applicationId sideBySide ? 'com.rinoize.risynth2.preview' : 'com.rinoize.risynth2'
+        manifestPlaceholders = [appLabel: sideBySide ? 'RiSynth2 Preview' : 'RiSynth2']
         // First port targets Android 13+ (Java 11 library APIs), including Tab A9 Android 16.
         minSdk 33
         targetSdk 35
@@ -15,6 +18,10 @@ android {
         externalNativeBuild {
             cmake { arguments '-DANDROID_STL=c++_static', '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON' }
         }
+    }
+    // CI supplies an explicit cached path; never rely on AGP's platform default.
+    if (System.getenv('RISYNTH2_KEYSTORE')) {
+        signingConfigs.debug.storeFile = file(System.getenv('RISYNTH2_KEYSTORE'))
     }
     buildTypes {
         debug { debuggable true }
