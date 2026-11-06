@@ -3,6 +3,8 @@ package com.rinoize.risynth2;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.database.Cursor;
@@ -13,6 +15,8 @@ import android.net.Uri;
 import android.os.*;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.text.TextWatcher;
+import android.text.Editable;
 import android.view.*;
 import android.widget.*;
 import java.io.*;
@@ -20,9 +24,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class MainActivity extends Activity implements MidiController.Listener {
-    private static final int IMPORT = 10, EXPORT = 11;
+    private static final int IMPORT = 10, EXPORT = 11, IMPORT_TREE = 12;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final Object libraryLock = new Object();
@@ -36,13 +42,26 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private AudioManager audioManager;
     private AudioFocusRequest focus;
     private SharedPreferences prefs;
-    private int requestedFrames = 512, routePreference = 0, volume = 48, bpm = 120;
+    private int requestedFrames = 1024, routePreference = 0, volume = 48, bpm = 120;
     private boolean lowLatency = true, refreshing;
     private String pendingExport, initialPatch;
     private String[] info;
     private LinearLayout root, body;
     private TextView lcd, bankLabel, diagnostic, midiLabel, notice;
     private Button audioButton;
+    private final DiagnosticMonitor monitor = new DiagnosticMonitor();
+    private TextView monitorDetail, importProgress;
+    private AlertDialog importProgressDialog;
+    private final AtomicBoolean cancelImport = new AtomicBoolean();
+    private final AtomicLong patchRequest = new AtomicLong();
+    private volatile boolean importing;
+    private String importStatus = "Preparando importación…";
+    private long lastImportProgress;
+    private double[] lastStats;
+    private long lastStatsWall, lastStatsCpu;
+    private final ExecutorService monitorWorker = Executors.newSingleThreadExecutor();
+    private boolean statsPending;
+
     private PianoView piano;
     private final Map<Integer, SeekBar> sliders = new HashMap<>();
     private final Map<Integer, TextView> valueLabels = new HashMap<>();
@@ -58,24 +77,64 @@ public final class MainActivity extends Activity implements MidiController.Liste
         @Override public void run() {
             NativeEngine e = engine;
             if (!foreground || destroyed) return;
-            if (e != null) {
-                double[] s = e.stats();
-                diagnostic.setText(String.format(Locale.US,
-                    "%s · %.0f Hz · buffer %.0f fr (pedido %d) · burst %.0f\nRender %.1f%% · pico %.1f%% · voces %.0f · cortes %.0f · clip %.0f · cola %.0f\nSalida ID %.0f · %s · MIDI %d · pedal %s",
-                    s[0] > 0 ? "AUDIO ACTIVO" : "AUDIO DETENIDO", s[1], s[3], requestedFrames, s[2],
-                    s[5], s[6], s[7], s[4], s[8], s[9], s[10], s[12] == 12 ? "LOW LATENCY" : "NORMAL",
-                    midi == null ? 0 : midi.messages.get(), midi != null && midi.sustain ? "ON" : "OFF"));
-                audioButton.setText(s[0] > 0 ? "Detener audio" : "Iniciar audio");
-                if (s[11] < 0) { wantsAudio = false; notice.setText("Audio desconectado (" + (int)s[11] + "). Pulsa Iniciar audio."); }
+            if (e != null && !statsPending) {
+                statsPending = true;
+                monitorWorker.execute(() -> {
+                    double[] sample = e.stats(); // never stall the UI on stream reconfiguration
+                    long wall = SystemClock.elapsedRealtime(), cpu = android.os.Process.getElapsedCpuTime();
+                    ui.post(() -> {
+                        statsPending = false;
+                        if (destroyed || !foreground) return;
+                        lastStats = sample; lastStatsWall = wall; lastStatsCpu = cpu;
+                        monitor.sample(sample, wall, cpu, requestedFrames, diagnosticContext());
+                        diagnostic.setText(monitor.compact());
+                        if (monitorDetail != null) monitorDetail.setText(monitor.detail());
+                        audioButton.setText(sample[0] > 0 ? "Detener audio" : "Iniciar audio");
+                        if (sample[11] < 0) { wantsAudio = false; notice.setText("Audio desconectado (" + (int)sample[11] + "). Pulsa Iniciar audio."); }
+                    });
+                });
             }
             ui.postDelayed(this, 500);
         }
     };
+    private String diagnosticContext() {
+        PowerManager power = (PowerManager)getSystemService(POWER_SERVICE);
+        String[] thermal = {"normal", "leve", "moderado", "severo", "crítico", "emergencia", "apagado"};
+        int level = power == null ? -1 : power.getCurrentThermalStatus();
+        return "Patch: " + patchName + " · polifonía: " + (engine == null ? 0 : engine.values()[94]) +
+            "\n" + midiName + " · mensajes " + (midi == null ? 0 : midi.messages.get()) +
+            " · sustain " + (midi != null && midi.sustain ? "ON" : "OFF") +
+            "\nEstado térmico Android: " + (level >= 0 && level < thermal.length ? thermal[level] : "n/d") +
+            " (no es temperatura en grados)";
+    }
+    private void monitorDialog() {
+        TextView details = text(monitor.detail(), 13); details.setTypeface(Typeface.MONOSPACE); details.setTextIsSelectable(true);
+        ScrollView scroll = new ScrollView(this); scroll.addView(details);
+        monitorDetail = details;
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Monitor de audio y CPU")
+            .setView(scroll).setPositiveButton("Copiar informe", null).setNeutralButton("Reiniciar", null).setNegativeButton("Cerrar",null).create();
+        dialog.setOnDismissListener(d -> { if (monitorDetail == details) monitorDetail = null; });
+        dialog.setOnShowListener(d -> {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("RiSynth2 diagnóstico",
+                    monitor.report("RiSynth2 " + BuildConfig.VERSION_NAME + " · " + Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE)));
+                Toast.makeText(this,"Informe copiado, listo para pegar",Toast.LENGTH_SHORT).show();
+            });
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
+                if (lastStats != null) {
+                    monitor.reset(lastStats,lastStatsWall,lastStatsCpu);
+                    details.setText("Contadores reiniciados. El audio no se detuvo.");
+                }
+            });
+        });
+        dialog.show();
+    }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         prefs = getSharedPreferences("risynth2", MODE_PRIVATE);
         volume = prefs.getInt("volume", 48); bpm = prefs.getInt("tempo", 120);
-        requestedFrames = prefs.getInt("frames", 512); lowLatency = prefs.getBoolean("lowLatency", true);
+        requestedFrames = prefs.getInt("frames", 1024); lowLatency = prefs.getBoolean("lowLatency", true);
         // Physical device IDs are session-specific: only local/automatic preference is persisted.
         routePreference = prefs.getBoolean("automaticRoute", false) ? -1 : 0;
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
@@ -102,7 +161,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
                     bankIndex = findBank(scanned, prefs.getString("bankKey", ":init"));
                     slot = Math.max(0, Math.min(127, prefs.getInt("slot", 0)));
                 }
-                ui.post(() -> { refreshControls(); refreshLcd(); message("Motor listo. Importa tus .sy1 o bancos ZIP."); });
+                ui.post(() -> { refreshControls(); refreshLcd(); message("Motor listo. Importa una carpeta con bancos, varios .sy1 o un ZIP."); });
             } catch (Exception ex) { message("No se pudo preparar el motor: " + ex.getMessage()); }
         });
     }
@@ -127,12 +186,16 @@ public final class MainActivity extends Activity implements MidiController.Liste
         });
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         body = new LinearLayout(this); body.setOrientation(LinearLayout.VERTICAL); scroll.addView(body);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, -1)); setContentView(root);
+        diagnostic = text("CPU app · Render · OV · XRuns\nPreparando monitor…", 12);
+        diagnostic.setTypeface(Typeface.MONOSPACE); diagnostic.setBackgroundColor(Color.rgb(25,42,58));
+        diagnostic.setOnClickListener(v -> monitorDialog()); diagnostic.setContentDescription("Monitor CPU y audio. Tocar para detalles, copiar informe o reiniciar contadores.");
+        root.addView(diagnostic, new LinearLayout.LayoutParams(-1,-2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(root);
         body.addView(text("RiSynth2  " + BuildConfig.VERSION_NAME + "  ·  Android", 23));
         LinearLayout tools = row(body);
         audioButton = button(tools, "Iniciar audio", () -> {
             NativeEngine e = engine;
-            if (e != null && e.stats()[0] > 0) { wantsAudio = false; stopAudio(); }
+            if (e != null && e.isStreaming()) { wantsAudio = false; stopAudio(); }
             else { wantsAudio = true; startAudio(); }
         });
         button(tools, "PANIC", this::panic);
@@ -186,9 +249,8 @@ public final class MainActivity extends Activity implements MidiController.Liste
         piano = new PianoView(this, (key, down) -> midi(down ? 0x90 : 0x80, key, down ? 100 : 0));
         body.addView(piano, new LinearLayout.LayoutParams(-1, dp(110)));
         midiLabel = text(midiName, 13); body.addView(midiLabel);
-        diagnostic = text("Preparando motor…", 12); diagnostic.setTypeface(Typeface.MONOSPACE); body.addView(diagnostic);
         notice = text("Compatible con patches Synth1. Sin ROM ni firmware.", 13); body.addView(notice);
-        body.addView(text("Render mide trabajo del callback, no CPU total ni latencia tecla–audio. Uso en primer plano.", 11));
+        body.addView(text("El monitor de arriba permanece visible. Tocalo para detalles, copiar o reiniciar. Uso en primer plano.", 11));
         refreshControls(); refreshLcd();
     }
     private interface IntChange { void changed(int value); }
@@ -229,14 +291,26 @@ public final class MainActivity extends Activity implements MidiController.Liste
         for (int i = 0; i < list.size(); ++i) if (list.get(i).key.equals(key)) return i; return 0;
     }
     private void applyPatch(int bank, int program) {
+        if (destroyed || importing) return;
+        final PatchStore.Patch patch;
+        final long request;
         synchronized (libraryLock) {
             if (bank < 0 || bank >= banks.size() || program < 0 || program >= 128 || engine == null) return;
-            PatchStore.Patch patch = banks.get(bank).slots[program];
+            patch = banks.get(bank).slots[program];
             if (patch == null) return;
-            if (!engine.load(patch.text)) { message("Cola MIDI llena: vuelve a cargar el patch."); return; }
-            bankIndex = bank; slot = program; patchName = patch.name;
+            bankIndex = bank; slot = program;
+            request = patchRequest.incrementAndGet();
         }
-        ui.post(() -> { refreshControls(); refreshLcd(); scheduleSave(); });
+        worker.execute(() -> {
+            if (destroyed || request != patchRequest.get()) return;
+            try {
+                String text = patch.readText();
+                if (request != patchRequest.get() || engine == null) return;
+                if (!engine.load(text)) { message("Cola MIDI llena: vuelve a cargar el patch."); return; }
+                patchName = patch.name;
+                ui.post(() -> { if (!destroyed) { refreshControls(); refreshLcd(); scheduleSave(); } });
+            } catch (IOException ex) { message("No se pudo cargar el patch: " + ex.getMessage()); }
+        });
     }
     private void changePatch(int delta) {
         synchronized (libraryLock) {
@@ -256,8 +330,31 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private void bankDialog() {
         List<PatchStore.Bank> snapshot = banks;
         if (snapshot.isEmpty()) return;
-        String[] names = snapshot.stream().map(b -> b.name).toArray(String[]::new);
-        new AlertDialog.Builder(this).setTitle("Bancos").setItems(names, (d, index) -> { applyPatch(index, snapshot.get(index).first()); patchDialog(); }).setNegativeButton("Cerrar", null).show();
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
+        EditText search = new EditText(this); search.setSingleLine(true); search.setHint("Buscar banco o carpeta…"); panel.addView(search);
+        ListView list = new ListView(this); panel.addView(list,new LinearLayout.LayoutParams(-1,dp(300)));
+        List<Integer> visible = new ArrayList<>();
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>()); list.setAdapter(adapter);
+        Runnable filter = () -> {
+            String query = search.getText().toString().toLowerCase(Locale.ROOT);
+            visible.clear(); adapter.clear();
+            for (int i=0;i<snapshot.size();++i) if (snapshot.get(i).name.toLowerCase(Locale.ROOT).contains(query)) {
+                visible.add(i); adapter.add(snapshot.get(i).name);
+            }
+            adapter.notifyDataSetChanged();
+        };
+        search.addTextChangedListener(new TextWatcher() {
+            public void beforeTextChanged(CharSequence s,int start,int count,int after) { }
+            public void onTextChanged(CharSequence s,int start,int before,int count) { filter.run(); }
+            public void afterTextChanged(Editable text) { }
+        });
+        filter.run();
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Bancos ("+snapshot.size()+")").setView(panel).setNegativeButton("Cerrar",null).create();
+        list.setOnItemClickListener((p,v,position,id) -> {
+            int index = findBank(banks,snapshot.get(visible.get(position)).key);
+            applyPatch(index,banks.get(index).first()); dialog.dismiss(); patchDialog();
+        });
+        dialog.show(); dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
     }
     private void patchDialog() {
         List<PatchStore.Bank> list = banks; if (list.isEmpty()) return;
@@ -309,14 +406,14 @@ public final class MainActivity extends Activity implements MidiController.Liste
         throw new IllegalStateException("No se encontro salida local. Elige una salida en Audio.");
     }
     private void startAudio() {
-        if (!foreground || !wantsAudio || destroyed) return;
+        if (!foreground || !wantsAudio || destroyed || importing) return;
         final int device;
         try { device = resolveDevice(); } catch (Exception e) { message(e.getMessage()); return; }
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { message("No se obtuvo el foco de audio."); return; }
         final int frames = requestedFrames; final boolean low = lowLatency;
         notice.setText("Preparando audio…"); getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         worker.execute(() -> {
-            if (!foreground || !wantsAudio || destroyed || engine == null) return;
+            if (!foreground || !wantsAudio || destroyed || importing || engine == null) return;
             String error = engine.start(device, frames, low);
             if (!error.isEmpty()) message("No se pudo iniciar: " + error);
             else message("Audio listo. Comienza con volumen bajo.");
@@ -348,8 +445,96 @@ public final class MainActivity extends Activity implements MidiController.Liste
     @Override public void state(String value) { midiName = "MIDI: " + value; ui.post(this::refreshLcd); }
     private void panic() { if (piano != null) piano.releaseAll(); computerKeys.clear(); NativeEngine e = engine; if (e != null) e.panic(); }
     private void importDialog() {
-        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
-        startActivityForResult(intent, IMPORT);
+        if (importing) { showImportProgress(); return; }
+        new AlertDialog.Builder(this).setTitle("Importar sonidos")
+            .setItems(new String[]{"Carpeta completa (incluye subcarpetas)","Archivos .sy1 / un banco ZIP"},(d,which) -> {
+                try {
+                    if (which == 0) {
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivityForResult(intent,IMPORT_TREE);
+                    } else {
+                        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+                            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);
+                        startActivityForResult(intent,IMPORT);
+                    }
+                } catch (android.content.ActivityNotFoundException ex) { message("No hay selector de archivos disponible."); }
+            }).setNegativeButton("Cancelar",null).show();
+    }
+    private void showImportProgress() {
+        if (destroyed || !importing || (importProgressDialog != null && importProgressDialog.isShowing())) return;
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(16),dp(8),dp(16),dp(8));
+        ProgressBar bar = new ProgressBar(this); panel.addView(bar);
+        importProgress = text(importStatus,14); panel.addView(importProgress);
+        panel.addView(text("Se copian los .sy1; los originales no se modifican. El audio queda detenido durante la importación.",12));
+        importProgressDialog = new AlertDialog.Builder(this).setTitle("Importando bancos")
+            .setView(panel).setNegativeButton("Cancelar",null).setCancelable(false).create();
+        importProgressDialog.setOnShowListener(d -> importProgressDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
+            cancelImport.set(true); importProgress.setText("Cancelando y descartando la importación incompleta…");
+            importProgressDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
+        }));
+        importProgressDialog.show();
+    }
+    private void importProgress(int folders,int patches,int skipped,String current) {
+        long now = SystemClock.elapsedRealtime();
+        if (now-lastImportProgress<200) return;
+        lastImportProgress = now;
+        String value = folders+" carpetas · "+patches+" patches · "+skipped+" omitidos\n"+current;
+        ui.post(() -> { importStatus=value; if (!destroyed && importProgress != null && !cancelImport.get()) importProgress.setText(value); });
+    }
+    private void beginImport(List<Uri> uris,boolean tree) {
+        if (importing || destroyed || uris.isEmpty()) return;
+        importing=true; cancelImport.set(false); lastImportProgress=0;
+        importStatus="Leyendo la selección…"; panic(); patchRequest.incrementAndGet(); showImportProgress();
+        worker.execute(() -> {
+            String outcome;
+            boolean success=false;
+            try {
+                if (engine != null) engine.stop();
+                if (store == null) throw new IOException("Biblioteca no preparada");
+                FolderImporter.Result result;
+                if (tree) {
+                    DocumentSource source = DocumentSource.tree(getContentResolver(),uris.get(0));
+                    result=FolderImporter.run(store,source,source.root,cancelImport::get,this::importProgress);
+                } else {
+                    String name=DocumentSource.displayName(getContentResolver(),uris.get(0),"Importado");
+                    if (uris.size()==1 && !name.toLowerCase(Locale.ROOT).endsWith(".sy1")) {
+                        // Existing ZIP parser remains bounded. Make cancellation visible even while reading.
+                        InputStream raw=getContentResolver().openInputStream(uris.get(0));
+                        if (raw==null) throw new IOException("No se pudo abrir el archivo");
+                        int count=store.importFile(raw,name,cancelImport::get);
+                        result=new FolderImporter.Result(); result.patches=count;
+                        outcome=count+" patches importados desde "+name;
+                    } else {
+                        DocumentSource source=DocumentSource.files(getContentResolver(),uris);
+                        result=FolderImporter.run(store,source,source.root,cancelImport::get,this::importProgress);
+                    }
+                }
+                ui.post(() -> {
+                    if (!destroyed && importProgressDialog!=null) {
+                        importProgress.setText("Importación guardada. Organizando la biblioteca…");
+                        importProgressDialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(false);
+                    }
+                });
+                List<PatchStore.Bank> scanned=store.scan(initialPatch);
+                synchronized (libraryLock) {
+                    String key=banks.isEmpty()?":init":banks.get(bankIndex).key;
+                    banks=scanned; bankIndex=findBank(scanned,key);
+                }
+                outcome=(result.banks>0?result.summary():result.patches+" patches importados")+
+                    (result.warnings.isEmpty()?"":"\n\nArchivos omitidos (hasta 8):\n"+String.join("\n",result.warnings));
+                success=true;
+            } catch (Exception ex) { outcome=ex.getMessage()==null?"Importación fallida":ex.getMessage(); }
+            final String report=outcome; final boolean completed=success;
+            ui.post(() -> {
+                importing=false;
+                if (importProgressDialog!=null) { importProgressDialog.dismiss(); importProgressDialog=null; importProgress=null; }
+                if (destroyed) return;
+                refreshLcd(); message(report);
+                new AlertDialog.Builder(this).setTitle(completed?"Importación terminada":"Importación no completada")
+                    .setMessage(report).setPositiveButton(completed?"Ver bancos":"Cerrar",(d,w)->{if(completed) bankDialog();}).show();
+                if (foreground && wantsAudio) startAudio();
+            });
+        });
     }
     private void exportDialog() {
         NativeEngine e = engine; if (e == null) return;
@@ -363,33 +548,20 @@ public final class MainActivity extends Activity implements MidiController.Liste
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request,result,data);
-        if (result != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
-        if (request == IMPORT) {
-            String name = "Importado";
-            try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null,null,null)) { if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0); }
-            catch (Exception ignored) { }
-            final String filename = name; message("Importando bancos…");
+        if (result != RESULT_OK || data == null) return;
+        if (request==IMPORT || request==IMPORT_TREE) {
+            LinkedHashSet<Uri> selected=new LinkedHashSet<>();
+            ClipData clips=data.getClipData();
+            if (clips!=null) for (int i=0;i<clips.getItemCount();++i) selected.add(clips.getItemAt(i).getUri());
+            else if (data.getData()!=null) selected.add(data.getData());
+            beginImport(new ArrayList<>(selected),request==IMPORT_TREE);
+        } else if (request==EXPORT && pendingExport!=null && data.getData()!=null) {
+            Uri uri=data.getData(); String contents=pendingExport; pendingExport=null;
             worker.execute(() -> {
-                try {
-                    if (store == null) throw new IOException("Biblioteca no preparada");
-                    InputStream in = getContentResolver().openInputStream(uri); if (in == null) throw new IOException("No se pudo abrir el archivo");
-                    int count = store.importFile(in, filename);
-                    List<PatchStore.Bank> scanned = store.scan(initialPatch);
-                    synchronized (libraryLock) {
-                        String key = banks.isEmpty() ? ":init" : banks.get(bankIndex).key;
-                        banks = scanned; bankIndex = findBank(scanned, key);
-                    }
-                    ui.post(() -> { refreshLcd(); message(count + " patches importados. Toca el nombre del banco para elegir."); bankDialog(); });
-                } catch (Exception ex) { message("Importacion fallida: " + ex.getMessage()); }
-            });
-        } else if (request == EXPORT && pendingExport != null) {
-            String contents = pendingExport; pendingExport = null;
-            worker.execute(() -> {
-                try (OutputStream out = getContentResolver().openOutputStream(uri, "wt")) {
-                    if (out == null) throw new IOException("No se pudo abrir el destino");
+                try (OutputStream out=getContentResolver().openOutputStream(uri,"wt")) {
+                    if (out==null) throw new IOException("No se pudo abrir el destino");
                     out.write(contents.getBytes(StandardCharsets.UTF_8)); message("Patch exportado.");
-                } catch (Exception ex) { message("No se pudo exportar: " + ex.getMessage()); }
+                } catch (Exception ex) { message("No se pudo exportar: "+ex.getMessage()); }
             });
         }
     }
@@ -414,7 +586,9 @@ public final class MainActivity extends Activity implements MidiController.Liste
         super.onConfigurationChanged(config); panic(); buildUi();
     }
     @Override protected void onDestroy() {
-        destroyed = true; foreground = false; ui.removeCallbacksAndMessages(null);
+        destroyed = true; foreground = false; cancelImport.set(true); patchRequest.incrementAndGet();
+        if (importProgressDialog != null) { importProgressDialog.dismiss(); importProgressDialog=null; }
+        monitorWorker.shutdown(); ui.removeCallbacksAndMessages(null);
         if (midi != null) midi.close(); audioManager.unregisterAudioDeviceCallback(audioDevices);
         worker.execute(() -> { NativeEngine e = engine; engine = null; if (e != null) e.close(); }); worker.shutdown();
         super.onDestroy();

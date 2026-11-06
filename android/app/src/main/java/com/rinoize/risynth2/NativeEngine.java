@@ -12,6 +12,7 @@ final class NativeEngine implements AutoCloseable {
         streaming = error.isEmpty();
         return error;
     }
+    synchronized boolean isStreaming() { return streaming; }
     synchronized void stop() { streaming = false; if (handle != 0) stopNative(handle); }
     synchronized void midi(int status, int d1, int d2) { if (handle != 0) midiNative(handle, status, d1, d2); }
     synchronized void panic() { if (handle != 0) panicNative(handle); }
@@ -28,7 +29,7 @@ final class NativeEngine implements AutoCloseable {
     synchronized String save(String name) { return handle == 0 ? "" : saveNative(handle, name); }
     synchronized int[] values() { return handle == 0 ? new int[99] : valuesNative(handle); }
     synchronized double[] stats() {
-        if (handle == 0) return new double[13];
+        if (handle == 0) return new double[21];
         double[] result = statsNative(handle);
         if (result[0] == 0) streaming = false;
         return result;

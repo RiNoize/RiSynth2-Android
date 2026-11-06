@@ -52,13 +52,13 @@ jobs:
       - name: Package APK
         run: |
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk dist/RiSynth2-0.1.0-arm64.apk
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/RiSynth2-0.1.0-arm64.apk
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/RiSynth2-0.1.0-arm64.apk
+          cp android/app/build/outputs/apk/release/app-release.apk dist/RiSynth2-0.2.0-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/RiSynth2-0.2.0-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/RiSynth2-0.2.0-arm64.apk
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.1.0-arm64
+          name: RiSynth2-0.2.0-arm64
           path: dist/*
           if-no-files-found: error
           retention-days: 30

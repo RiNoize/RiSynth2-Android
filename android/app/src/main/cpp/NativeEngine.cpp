@@ -11,6 +11,7 @@
 #include "EngineCore/Synth.hpp"
 #include "EngineCore/InitPatch.hpp"
 #include "EventQueue.hpp"
+#include "RenderMetrics.hpp"
 
 using namespace oxo::s2;
 namespace {
@@ -29,6 +30,9 @@ public:
     std::atomic<int> error{0}, voices{0};
     std::atomic<uint64_t> clips{0}, dropped{0};
     std::atomic<double> renderPercent{0}, peakPercent{0};
+    RenderMetrics metrics;
+    uint64_t streamGeneration = 0; // serialized control-side state
+    int stoppedXruns = 0;
     AAudioStream* stream = nullptr; // lifecycle and stats serialized by Java
     std::array<float, kChunk> left{}, right{};
     int volume = 48;
@@ -102,7 +106,10 @@ public:
         int count = 0;
         for (int i = 0; i < kMaxVoices; ++i, state >>= 2) count += (state & 3) != 0;
         e.voices.store(count, std::memory_order_relaxed);
-        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+        const auto elapsed = std::chrono::steady_clock::now() - begin;
+        const auto nanos = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+        const double seconds = double(nanos) / 1.0e9;
+        e.metrics.record(nanos, frames, e.synth.SampleRate());
         const double percent = frames > 0 ? seconds * e.synth.SampleRate() * 100.0 / frames : 0.0;
         e.renderPercent.store(e.renderPercent.load(std::memory_order_relaxed) * 0.9 + percent * 0.1, std::memory_order_relaxed);
         e.peakPercent.store(std::max(percent, e.peakPercent.load(std::memory_order_relaxed)), std::memory_order_relaxed);
@@ -111,6 +118,7 @@ public:
     void stop() {
         active.store(false);
         if (stream) {
+            stoppedXruns = AAudioStream_getXRunCount(stream);
             AAudioStream_requestStop(stream);
             AAudioStream_close(stream); // waits until data callbacks have stopped
             stream = nullptr;
@@ -123,6 +131,7 @@ public:
         stop();
         error.store(0); clips.store(0); dropped.store(0);
         renderPercent.store(0); peakPercent.store(0);
+        metrics.clear(); stoppedXruns = 0; ++streamGeneration;
         AAudioStreamBuilder* builder = nullptr;
         aaudio_result_t result = AAudio_createStreamBuilder(&builder);
         if (result != AAUDIO_OK) return AAudio_convertResultToText(result);
@@ -242,13 +251,22 @@ JNIEXPORT jdoubleArray JNICALL Java_com_rinoize_risynth2_NativeEngine_statsNativ
         e.synth.SampleRate(),
         e.stream ? double(AAudioStream_getFramesPerBurst(e.stream)) : 0.0,
         e.stream ? double(AAudioStream_getBufferSizeInFrames(e.stream)) : 0.0,
-        e.stream ? double(AAudioStream_getXRunCount(e.stream)) : 0.0,
+        e.stream ? double(AAudioStream_getXRunCount(e.stream)) : double(e.stoppedXruns),
         e.renderPercent.load(), e.peakPercent.load(), double(e.voices.load()),
         double(e.clips.load()), double(e.dropped.load()),
         e.stream ? double(AAudioStream_getDeviceId(e.stream)) : 0.0,
         double(e.error.load()),
-        e.stream ? double(AAudioStream_getPerformanceMode(e.stream)) : 0.0
+        e.stream ? double(AAudioStream_getPerformanceMode(e.stream)) : 0.0,
+        double(e.metrics.callbacks.load(std::memory_order_acquire)),
+        double(e.metrics.wallNanos.load(std::memory_order_relaxed)),
+        double(e.metrics.framesTotal.load(std::memory_order_relaxed)),
+        double(e.metrics.overruns.load(std::memory_order_relaxed)),
+        e.metrics.intervalPeak.exchange(0, std::memory_order_relaxed),
+        double(e.metrics.lastFrames.load(std::memory_order_relaxed)),
+        e.stream ? double(AAudioStream_getBufferCapacityInFrames(e.stream)) : 0.0,
+        double(e.streamGeneration)
     };
-    auto a = env->NewDoubleArray(13); if (a) env->SetDoubleArrayRegion(a, 0, 13, s); return a;
+    constexpr int count = int(sizeof(s) / sizeof(s[0]));
+    auto a = env->NewDoubleArray(count); if (a) env->SetDoubleArrayRegion(a, 0, count, s); return a;
 }
 }

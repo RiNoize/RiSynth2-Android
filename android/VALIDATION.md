@@ -9,3 +9,9 @@ The unchanged upstream Linux test suite reported 52 of 53 tests passing. `PatchM
 A successful APK build, lint and signing/alignment verification still do not constitute a tablet playback test. USB MIDI, routing, practical latency, sustained chords, temperature behavior and sound comparison require actual-device testing.
 
 Minimum supported Android version for the first APK: Android 13 (API 33), ARM64. Test signing is not a production release key.
+
+## 0.2.0 additions
+
+Host tests additionally exercise a synthetic tree of 220 banks / 28,160 .sy1 patches under a 192 MiB Java heap, nested/root directories, numeric-slot reservations with duplicate numbers, ignored files and malformed patches, alias/cycle protection, 260-patch bank splitting, rollback after a bank has been staged, duplicate-import safety, lazy patch reads and migration of 0.1.0 banks. Separate deterministic tests cover process CPU percentages above 100%, nonuniform sample intervals, render-budget percentages, OV rates/resets, unsupported xrun readings, bounded diagnostics history and callback sizes distinct from the output buffer. These tests do not simulate every SAF document provider or establish audio performance on ARM hardware.
+
+The user's 0.1.0 report (glitches with 512 frames; improved at 1024) is a device observation, not a benchmark of 0.2.0. No synthesis algorithms or quality settings were changed in 0.2.0.

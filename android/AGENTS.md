@@ -9,3 +9,11 @@ The local speaker/wired-headphone preference must never fall back silently to US
 Preserve .sy1 indices and native integer ranges. Patch parsing and legacy conversion use EngineCore/Sy1Codec.hpp. UI builds/imports no factory banks beyond InitPatch. ZIP names are display metadata only; output paths are generated locally. Bounded staged import must remain atomic and must not overwrite banks.
 
 Run bash android/test-host.sh, upstream engine tests and Gradle assembleRelease/lintRelease. Green CI is not a hardware test. Do not claim Tab A9 performance or low latency without measurements from the actual device. VersionName, versionCode, workflow artifact naming and README must agree. Production signing is not configured; cached CI signing is development-only.
+
+## 0.2 monitoring / bulk-import contracts
+
+`RenderMetrics.hpp` tracks callback wall nanoseconds, produced frames, count, deadline overruns, interval peak and actual callback frames using lock-free atomics. Stats 0..12 retain the old layout; 13..20 are documented in `DiagnosticMonitor`. Only the diagnostics worker calls stats (it consumes the interval peak). CPU process time comes from Android Process; use actual monotonic sample intervals and keep the >100%-per-core convention. Reset UI baselines without restarting audio. Never conflate OV, AAudio xruns, clipped samples or queue loss.
+
+`DocumentSource` is the SAF adapter; `FolderImporter` is host-testable and stages a whole tree through `PatchStore.ImportBatch`. Source labels never form local paths. Bound traversal/count/bytes/depth, reserve numeric slots, split extra patches, skip/report malformed .sy1, abort and roll back on cancellation/read errors. Folder imports are not limited to the ZIP importer's 4096 patches. Preserve originals and existing private banks. Audio stays stopped during file import. Cancellation is checked before commit, including ZIP imports.
+
+Private banks have `index.tsv` metadata (versioned header, slot and Base64 display name). Scan indexes, not all patch text; migrate old banks once. `Patch.readText()` is worker-only. UI/MIDI program selection queues a load and coalesces stale requests. Keep the library lock short. Large-tree and diagnostics tests belong in test-host.sh. The pinned monitor must remain visible while the instrument panel scrolls.
