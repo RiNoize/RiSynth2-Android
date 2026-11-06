@@ -19,6 +19,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Archive exact source for reproducible diagnostics
+        run: git archive --format=tar.gz --output="${RUNNER_TEMP}/RiSynth2-source.tar.gz" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiSynth2-source-${{ github.sha }}
+          path: ${{ runner.temp }}/RiSynth2-source.tar.gz
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
