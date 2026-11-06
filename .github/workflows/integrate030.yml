@@ -1,0 +1,72 @@
+name: Validate RiSynth2 0.3.0 integration
+on:
+  push:
+    branches: [codex/favorites-performance-030]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    if: github.repository == 'RiNoize/RiSynth2-Android'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed source changes with before/after hash verification
+        run: |
+          python3 .ci/apply030.py
+          rm .ci/changes1.py .ci/changes2.py .ci/changes3.py .ci/apply030.py
+          # The connected repository editor will finalize workflow changes.
+          # The runner publishes only code/docs, not workflow modifications.
+          git restore --source=HEAD .github/workflows/android.yml
+          git add -A
+          git -c user.name=RiNoize -c user.email=70249646+RiNoize@users.noreply.github.com commit -m 'Add RiSynth2 0.3.0 favorites and exact-cache DSP optimizations' -m 'Save immutable edited .sy1 favorites with duplicate protection and paged browsing. Reuse exact envelope, tuning and filter calculations and global pitch modulation without reducing quality or polyphony. Add sample-by-sample comparison against 0.2.0 plus repeatable host benchmarks. Preserve the pinned Preview signing identity.'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Favorites, import, MIDI and diagnostics tests
+        run: bash android/test-host.sh
+      - name: Exact audio regression and host benchmark
+        run: bash android/test-engine.sh
+      - name: Original engine regression tests
+        run: bash android/test-upstream.sh
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Android SDK and NDK
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/risynth2-ci
+          key: risynth2-development-signing-v2
+      - name: Verify existing signing identity
+        run: bash android/prepare-signing.sh
+      - name: Build Preview ARM64 and lint
+        working-directory: android
+        run: gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease --stacktrace
+      - name: Verify and package exact candidate
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk dist/RiSynth2-0.3.0-preview-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs dist/RiSynth2-0.3.0-preview-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 dist/RiSynth2-0.3.0-preview-arm64.apk
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/RiSynth2-0.3.0-preview-arm64.apk | grep -E '^(package:|application-label:)'
+          git rev-parse HEAD > dist/BUILD-COMMIT.txt
+          git archive --format=tar.gz --output=dist/RiSynth2-0.3.0-source.tar.gz HEAD
+          cp android/app/build/reports/engine-performance.txt dist/
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - name: Publish verified feature commit without overwriting another writer
+        run: git push origin HEAD:refs/heads/codex/favorites-performance-030
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiSynth2-0.3.0-preview-verified
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-030-reports
+          path: android/app/build/reports/
+          if-no-files-found: ignore
