@@ -427,10 +427,41 @@ public:
                 lfo_[k].Render(lfoBuf_[k], n, values_[k ? kLfo2Type : kLfo1Type], hz, sampleRate_);
                 if (values_[k ? kLfo2On : kLfo1On]) lfo[k] = lfoBuf_[k];
             }
+            // Shared, sample-accurate pitch modulation. The oscillator base
+            // pitch, portamento and mod envelope remain per voice.
+            bool pitchModulated = false;
+            for (int k = 0; k < 2; ++k) {
+                const int dest = std::clamp<int>(values_[k ? kLfo2Dest : kLfo1Dest], 1, 7);
+                if (lfo[k] && (dest == 1 || dest == 2)) pitchModulated = true;
+            }
+            if (pitchModulated) {
+                const double bendCents = bendSemis * 100.0;
+                const auto ratio = [&](int which, double cents) {
+                    const double quantized = 9.375 * std::trunc(cents / 9.375);
+                    if (quantized != pitchCentsCache_[which]) {
+                        pitchCentsCache_[which] = quantized;
+                        pitchRatioCache_[which] = std::exp2(quantized / 1200.0);
+                    }
+                    return pitchRatioCache_[which];
+                };
+                for (int i = 0; i < n; ++i) {
+                    double all = 0, second = 0;
+                    for (int k = 0; k < 2; ++k) {
+                        if (!lfo[k]) continue;
+                        const int dest = std::clamp<int>(values_[k ? kLfo2Dest : kLfo1Dest], 1, 7);
+                        const double depth = tables::kLfoPitchCents[values_[k ? kLfo2Depth : kLfo1Depth]];
+                        if (dest == 2) all += depth * lfo[k][i];
+                        if (dest == 1) second += depth * lfo[k][i];
+                    }
+                    pitchAll_[i] = ratio(0, bendCents + all);
+                    pitchOsc2_[i] = ratio(1, bendCents + all + second);
+                }
+            }
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
             for (Voice &v : voices_)
-                v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, cutoffStart, cutoffStep);
+                v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, cutoffStart, cutoffStep,
+                         pitchModulated ? pitchAll_ : nullptr, pitchModulated ? pitchOsc2_ : nullptr);
             if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
             toArp = ArpAdvance(n);
         }
@@ -595,6 +626,8 @@ private:
     Equalizer eq_;
     EffectUnit effect_;
     double lfoBuf_[2][kLfoBlock] = {};
+    double pitchAll_[kLfoBlock] = {}, pitchOsc2_[kLfoBlock] = {};
+    double pitchCentsCache_[2] = {-1e30, -1e30}, pitchRatioCache_[2] = {1, 1};
     Rng rng_;
     double sampleRate_ = 44100.0;
     double tempo_ = 120.0;

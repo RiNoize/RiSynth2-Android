@@ -688,3 +688,7 @@ original AU; keeps both renders for listening).
   patch0010 (LPDL + smooth random LFO). A resonant LP24 pulled shut by a
   strongly negative env with a slow attack stays louder in the original.
   PW: within ~1 / 254 of the original.
+
+## RiSynth2 Android 0.3.0 fork
+
+Android-specific documentation is in android/AGENTS.md. At the user's request, the fork now memoizes exact envelope/voice/filter inputs and shares global pitch-LFO calculations; original measured tables/formulas remain. `android/test-engine.sh` is the mandatory bit-for-bit regression against the 0.2.0 shipped engine, with separate non-device host benchmarks. Favorites are immutable .sy1 snapshots managed outside the audio thread. See android/OPTIMIZATION.md.

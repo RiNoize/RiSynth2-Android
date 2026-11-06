@@ -1,16 +1,24 @@
-# RiSynth2 Android 0.2.0
+# RiSynth2 Android 0.3.0
 
 Independent Android adaptation of the Oxo Synth2 C++ engine, compatible with Synth1 `.sy1` patches. Not an official Oxo Music or Daichi Laboratory application. Original engine and MIT notices are retained. No original Synth1 binaries, artwork, ROMs or third-party preset banks are bundled.
 
 ## Install / update
 
-GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.2.0-arm64**. Two APKs are included. **For users of 0.1.0, install `RiSynth2-0.2.0-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
+GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.3.0-arm64**. Two APKs are included. **For users of 0.1.0, install `RiSynth2-0.3.0-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
 
 The 0.1.0 workflow attempted to cache a signing-key path that did not exist, so its signing key was not preserved. The normal 0.2.0 APK (`com.rinoize.risynth2`) therefore cannot update that earlier installation in place. Do not uninstall 0.1.0 merely to try it. Preview is the non-destructive alternative and its future updates must retain the Preview package ID.
 
 CI now explicitly provisions/uses `~/.android/risynth2-ci/debug.keystore`, caches that exact directory, and checks `android/dev-signing-cert.sha256` when present. A pinned signer mismatch or missing pinned key stops the build rather than silently rotating it. No private key is uploaded as a build artifact or committed. This remains development signing; a durable owner-managed signing key is needed for production. Do not clear app data: it erases that installation's private banks and settings.
 
 Target: Samsung Galaxy Tab A9 SM-X110, ARM64, Android 13+. The user reported glitches at 512 frames and better results at 1024 in 0.1.0. This release adds measurements, not a claim that those glitches have been fixed. New installations request 1024 frames; an existing explicitly saved setting is kept. Choose **Audio → 1024 frames** for the first comparison. Actual buffer size can differ from the request.
+
+## New in 0.3.0
+
+**☆ Guardar favorito** saves an independent .sy1 copy with the current parameter edits. Repeated presses do not duplicate an identical snapshot; changed settings create a new copy even with the same name. **★ Favoritos** opens the collection, also pinned after INIT in the bank list. Collections larger than 128 sounds are paged automatically. Saving leaves the source and current program untouched. Favorites are private app data; export important patches before uninstalling/clearing storage.
+
+The engine now reuses exact calculations for envelopes, tuning and static filters, and shares global pitch-LFO work between voices. No lower-quality mode or reduced polyphony is used. Automated tests compare output sample by sample against 0.2.0. Performance is patch-dependent and needs tablet verification: see [OPTIMIZATION.md](OPTIMIZATION.md). Increasing the buffer alone does not reduce the synthesis work per second.
+
+Install the **Preview 0.3.0** APK over **Preview 0.2.0** without uninstalling: package ID and pinned signing certificate are retained. It remains separate from the old 0.1.0 application.
 
 ## Always-visible audio / CPU monitor
 
@@ -38,7 +46,7 @@ Folder limits: 131,072 candidate patches, 200,000 entries, depth 32, 256 MiB pat
 
 ## Existing features retained
 
-Original `EngineCore/` and all 99 parameter indices/ranges are unchanged. Stereo AAudio float output at the actual device rate; shared output, optional low-latency request; explicit stop/reopen for settings. Local tablet speaker/wired output is preferred without silently selecting USB audio. USB MIDI source/port/channel selection, sustain, mod wheel, pitch bend, channel pressure, program change and bank select. CC0/32 selects the visible bank index, zero-based; Program Change selects slots 1–128. Library order can change after import.
+All 99 parameter indices/ranges are unchanged. Engine calculations are now memoized as documented in OPTIMIZATION.md; measured tables and synthesis formulas are retained. Stereo AAudio float output at the actual device rate; shared output, optional low-latency request; explicit stop/reopen for settings. Local tablet speaker/wired output is preferred without silently selecting USB audio. USB MIDI source/port/channel selection, sustain, mod wheel, pitch bend, channel pressure, program change and bank select. CC0/32 selects the visible bank index, zero-based; Program Change selects slots 1–128. Library order can change after import.
 
 INIT, real-time controls, all-parameter editor, patch export and last-session persistence remain. Multitouch keyboard and QWERTY Z S X D C V G B H N J M; Space sustain. Portrait and both landscape orientations. Start at low volume. Export important edited patches before clearing storage/uninstalling.
 
@@ -54,6 +62,7 @@ JDK 17, Gradle 8.11.1, Android SDK 35 / build-tools 35.0.0, NDK 27.2.12479018, C
 
 ```sh
 bash android/test-host.sh
+bash android/test-engine.sh
 bash android/test-upstream.sh
 cd android
 gradle -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease

@@ -60,6 +60,20 @@ public:
         ladderComp = comp_[i] + (comp_[i + 1] - comp_[i]) * t;
     }
 
+    double LookupSvf(double knob) const {
+        const double x = std::clamp(knob, 0.0, 127.0) * kSteps;
+        const int i = std::min(int(x), kSize - 2);
+        const double t = x - i;
+        return svfF_[i] + (svfF_[i + 1] - svfF_[i]) * t;
+    }
+    void LookupLadder(double knob, double &a, double &comp) const {
+        const double x = std::clamp(knob, 0.0, 127.0) * kSteps;
+        const int i = std::min(int(x), kSize - 2);
+        const double t = x - i;
+        a = ladderA_[i] + (ladderA_[i + 1] - ladderA_[i]) * t;
+        comp = comp_[i] + (comp_[i + 1] - comp_[i]) * t;
+    }
+
 private:
     explicit FilterTables(double sr) : sampleRate_(sr), svfF_(kSize), ladderA_(kSize), comp_(kSize) {
         for (int k = 0; k < kSize; ++k) {
@@ -84,6 +98,7 @@ class VoiceFilter {
 public:
     void Prepare(double sampleRate) {
         sampleRate_ = sampleRate;
+        configuredType_ = -1; // coefficients are sample-rate dependent
         tables_ = FilterTables::ForSampleRate(sampleRate);
         agcAttack_ = 1.0 - std::exp(-1.0 / (0.0012 * sampleRate));
         agcRelease_ = 1.0 - std::exp(-1.0 / (0.2017 * sampleRate));
@@ -101,14 +116,22 @@ public:
 
     // type 0..4, cutoff in knob units (may be fractional / out of range), res 0..127.
     void SetParams(int type, double cutoffKnob, int res) {
+        // Do not recompute static coefficients during held pads. This is
+        // exact equality, not a lower control rate or cutoff quantization.
+        if (type == configuredType_ && res == configuredRes_ && cutoffKnob == configuredCutoff_) return;
+        configuredType_ = type; configuredRes_ = res; configuredCutoff_ = cutoffKnob;
         type_ = type;
         if (type == 4) return SetDiode(cutoffKnob, res);
-        const double r = res / 127.0;
-        double comp;
-        tables_->Lookup(cutoffKnob, svfF_, ladderA_, comp);
-        ladderK_ = std::max(0.0, 0.0297 * res - 0.076) * comp;
-        svfD_ = std::max(1.0 - r, 0.0);
-        svfG_ = 1.0 - 0.7 * r;
+        if (type == 1) {
+            double comp;
+            tables_->LookupLadder(cutoffKnob, ladderA_, comp);
+            ladderK_ = std::max(0.0, 0.0297 * res - 0.076) * comp;
+        } else {
+            svfF_ = tables_->LookupSvf(cutoffKnob);
+            const double r = res / 127.0;
+            svfD_ = std::max(1.0 - r, 0.0);
+            svfG_ = 1.0 - 0.7 * r;
+        }
     }
 
     double Process(double x) {
@@ -247,7 +270,8 @@ private:
 
     double sampleRate_ = 44100;
     std::shared_ptr<const FilterTables> tables_;
-    int type_ = 1;
+    int type_ = 1, configuredType_ = -1, configuredRes_ = -1;
+    double configuredCutoff_ = 0;
     double svfF_ = 0.1, svfD_ = 1, svfG_ = 1;
     double low_ = 0, band_ = 0;
     double ladderA_ = 0.5, ladderK_ = 0, ladderGain_ = 1;

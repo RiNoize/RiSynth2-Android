@@ -21,6 +21,13 @@ public:
     enum class SustainLaw { Amp, Linear };
     void Configure(double sampleRate, int attack, int decay, int sustain, int release,
                    SustainLaw law = SustainLaw::Amp) {
+        // Coefficients depend on settings, not the envelope's current stage.
+        // Preserve the measured expressions; avoid exp() on every voice chunk.
+        if (sampleRate == configuredRate_ && attack == configuredAttack_ && decay == configuredDecay_ &&
+            sustain == configuredSustain_ && release == configuredRelease_ && law == configuredLaw_) return;
+        configuredRate_ = sampleRate;
+        configuredAttack_ = attack; configuredDecay_ = decay;
+        configuredSustain_ = sustain; configuredRelease_ = release; configuredLaw_ = law;
         attackStep_ = 1.0 / std::max(1.0, tables::kAmpAttackSeconds[attack] * sampleRate);
         decayCoef_ = 1.0 - std::exp(-1.0 / (tables::kEnvTauSeconds[decay] * sampleRate));
         releaseCoef_ = 1.0 - std::exp(-1.0 / (tables::kEnvTauSeconds[release] * sampleRate));
@@ -69,6 +76,9 @@ public:
 private:
     static constexpr double kAim = 1.0 / 2048;
 
+    double configuredRate_ = -1;
+    int configuredAttack_ = -1, configuredDecay_ = -1, configuredSustain_ = -1, configuredRelease_ = -1;
+    SustainLaw configuredLaw_ = SustainLaw::Amp;
     Stage stage_ = Stage::Idle;
     double level_ = 0;
     double attackStep_ = 1, decayCoef_ = 1, releaseCoef_ = 1, sustain_ = 1;

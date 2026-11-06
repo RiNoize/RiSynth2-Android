@@ -6,6 +6,7 @@ final class NativeEngine implements AutoCloseable {
     static { System.loadLibrary("risynth2"); }
     private long handle = create();
     private boolean streaming;
+    private String loadedName = "INIT";
     synchronized String start(int device, int frames, boolean lowLatency) {
         if (handle == 0) return "Motor cerrado";
         String error = startNative(handle, device, frames, lowLatency);
@@ -24,8 +25,12 @@ final class NativeEngine implements AutoCloseable {
     synchronized void tempo(int value) { if (handle != 0) { tempoNative(handle, value); flushStopped(); } }
     synchronized boolean load(String sy1) {
         if (handle == 0) return false;
-        boolean accepted = loadNative(handle, sy1); flushStopped(); return accepted;
+        boolean accepted = loadNative(handle, sy1);
+        if (accepted) loadedName = sy1.split("\\R", 2)[0];
+        flushStopped(); return accepted;
     }
+    // One lock captures parameters and their matching loaded name at tap time.
+    synchronized String snapshot() { return handle == 0 ? "" : saveNative(handle, loadedName); }
     synchronized String save(String name) { return handle == 0 ? "" : saveNative(handle, name); }
     synchronized int[] values() { return handle == 0 ? new int[99] : valuesNative(handle); }
     synchronized double[] stats() {

@@ -154,7 +154,8 @@ public:
     // pos: the chunk's first sample in the host block; blockEnd: the host
     // block's length.
     void Render(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
-                double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep) {
+                double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep,
+                const double *pitchAll = nullptr, const double *pitchOsc2 = nullptr) {
         if (!Active()) return;
         if (p[kPortaTime] <= 0) glide_ = note_;
         // (measured, measure_porta.py) a glide moves every 16 samples
@@ -162,7 +163,8 @@ public:
             const bool gliding = glide_ != note_;
             const int n = gliding ? std::min(frames - off, glideTick_) : frames - off;
             const double *at[2] = {lfo[0] ? lfo[0] + off : nullptr, lfo[1] ? lfo[1] + off : nullptr};
-            RenderChunk(left + off, right + off, n, pos + off, blockEnd, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep);
+            RenderChunk(left + off, right + off, n, pos + off, blockEnd, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep,
+                        pitchAll ? pitchAll + off : nullptr, pitchOsc2 ? pitchOsc2 + off : nullptr);
             off += n;
             if (gliding && (glideTick_ -= n) == 0) {
                 glideTick_ = 16;
@@ -176,7 +178,8 @@ public:
 
 private:
     void RenderChunk(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
-                     double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep) {
+                     double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep,
+                     const double *pitchAll, const double *pitchOsc2) {
         // ---- LFO routing (measured depth laws per destination). Both LFOs on
         // one destination (measured, measure_lfo_sum.py): pitch = sum of each
         // LFO's cents; cutoff / FM / pw / pan = the law applied to the
@@ -200,12 +203,18 @@ private:
         const double played = note_ + (gap < 0 ? -1 : 1) * kGlideStep * std::ceil(std::abs(gap) / kGlideStep - 1e-9);
         // bend + LFO pitch: added per sample, quantized (PitchMod)
         const double base = played + p[kOscKeyShift] + tuneSemis + unisonSemis_;
-        const double f1 = NoteHz(base);
+        if (base != cachedBase_) { cachedBase_ = base; cachedF1_ = NoteHz(base); }
+        const double f1 = cachedF1_;
         const double osc2Note = (p[kOsc2KbdTrack] ? base : 57.0 + tuneSemis) +
                                 tables::kOsc2PitchSemis[p[kOsc2Pitch]] + tables::kFineCents[p[kOsc2Fine]] / 100.0;
-        const double f2 = NoteHz(osc2Note);
+        if (osc2Note != cachedOsc2Note_) { cachedOsc2Note_ = osc2Note; cachedF2_ = NoteHz(osc2Note); }
+        const double f2 = cachedF2_;
         const int t1 = int(std::lround(base + bendSemis)), t2 = int(std::lround(osc2Note + bendSemis));
-        const double bendCents = bendSemis * 100.0, bendRatio = std::exp2(PitchMod(bendCents) / 1200.0);
+        const double bendCents = bendSemis * 100.0;
+        if (bendCents != cachedBend_) {
+            cachedBend_ = bendCents; cachedBendRatio_ = std::exp2(PitchMod(bendCents) / 1200.0);
+        }
+        const double bendRatio = cachedBendRatio_;
         const bool osc1Silent = t1 > 127, osc2Silent = t2 > 127; // (measured) no table above note 127
         const WaveTable &saw1 = tables_->Saw(std::clamp(t1, 0, 127));
         const WaveTable &tri1 = tables_->Triangle(std::clamp(t1, 0, 127));
@@ -229,9 +238,12 @@ private:
         const int subShape = p[kSubShape];
         const double subRatio = p[kSubOctave] ? 0.5 : 1.0;
         const bool detuneOn = p[kOsc1Detune] > 0;
-        double detuneRatio[kDetuneOscs];
-        for (int i = 0; i < kDetuneOscs; ++i)
-            detuneRatio[i] = std::exp2(kDetuneOffsets[i] * (20.0 * p[kOsc1Detune] / 127.0) / 1200.0);
+        if (p[kOsc1Detune] != cachedDetune_) {
+            cachedDetune_ = p[kOsc1Detune];
+            for (int i = 0; i < kDetuneOscs; ++i)
+                detuneRatio_[i] = std::exp2(kDetuneOffsets[i] * (20.0 * p[kOsc1Detune] / 127.0) / 1200.0);
+        }
+        const auto &detuneRatio = detuneRatio_;
         const double detuneGain = shape1 == 0 ? 0.288 : 0.297; // (measured) per detuned copy
 
         // ---- cutoff modulation in knob units (measured): kbd track pivots on
@@ -255,8 +267,12 @@ private:
         // (measured) amount -> -1..+1: (amt - 64) / 63 above 64, / 64 below
         const double modAmt = (p[kModEnvAmount] - 64) / (p[kModEnvAmount] > 64 ? 63.0 : 64.0);
 
-        const double ampGain = kOscAmplitude * tables::kAmpGain[p[kAmpGain]] *
-                               std::pow(10.0, -15.0 * (p[kAmpVelSens] / 64.0) * (127 - velocity_) / 126.0 / 20.0);
+        if (p[kAmpGain] != cachedGain_ || p[kAmpVelSens] != cachedVelSens_ || velocity_ != cachedVelocity_) {
+            cachedGain_ = p[kAmpGain]; cachedVelSens_ = p[kAmpVelSens]; cachedVelocity_ = velocity_;
+            cachedAmpGain_ = kOscAmplitude * tables::kAmpGain[p[kAmpGain]] *
+                            std::pow(10.0, -15.0 * (p[kAmpVelSens] / 64.0) * (127 - velocity_) / 126.0 / 20.0);
+        }
+        const double ampGain = cachedAmpGain_;
 
         double curWidth = width;
         auto shape1At = [&](double ph) -> double {
@@ -299,9 +315,12 @@ private:
         for (int i = 0; i < frames; ++i) {
             // ---- per-sample modulation ----
             const double me = modOn ? modEnv_.Next() * modAmt : 0.0;
-            const double lfoAll = r[2] ? pitchCents(r[2], i) : 0.0;
-            const double mAll = r[2] ? std::exp2(PitchMod(bendCents + lfoAll) / 1200.0) : bendRatio;
-            const double m2 = r[1] ? std::exp2(PitchMod(bendCents + lfoAll + pitchCents(r[1], i)) / 1200.0) : mAll;
+            // Pitch LFOs and bend are global: Synth computes the exact same
+            // quantized ratios once per sample, not once per unison voice.
+            // Keep the original path for direct Voice callers (tests/tools).
+            const double lfoAll = !pitchAll && r[2] ? pitchCents(r[2], i) : 0.0;
+            const double mAll = pitchAll ? pitchAll[i] : r[2] ? std::exp2(PitchMod(bendCents + lfoAll) / 1200.0) : bendRatio;
+            const double m2 = pitchOsc2 ? pitchOsc2[i] : r[1] ? std::exp2(PitchMod(bendCents + lfoAll + pitchCents(r[1], i)) / 1200.0) : mAll;
             // (measured) mod env -> osc2 pitch: +-60 semitones at env 1 (not quantized)
             const double mEnv2 = (modOn && modDest == 0) ? std::exp2(me * 60.0 / 12.0) : 1.0;
             const double incA = inc1 * mAll, incB = inc2 * m2 * mEnv2;
@@ -457,6 +476,11 @@ private:
         glideTick_ = 16;
     }
 
+    // Exact memoization: no tables approximated, no precision/voice reduction.
+    double cachedBase_ = -1e30, cachedOsc2Note_ = -1e30, cachedBend_ = -1e30;
+    double cachedF1_ = 0, cachedF2_ = 0, cachedBendRatio_ = 1, cachedAmpGain_ = 0;
+    int cachedDetune_ = -1, cachedGain_ = -1, cachedVelSens_ = -1, cachedVelocity_ = -1;
+    std::array<double, kDetuneOscs> detuneRatio_{};
     double sampleRate_ = 44100;
     std::shared_ptr<const WaveTableSet> tables_;
     Adsr amp_;

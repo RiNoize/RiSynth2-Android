@@ -48,7 +48,8 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private String[] info;
     private LinearLayout root, body;
     private TextView lcd, bankLabel, diagnostic, midiLabel, notice;
-    private Button audioButton;
+    private Button audioButton, favoriteButton;
+    private boolean favoriteSaving;
     private final DiagnosticMonitor monitor = new DiagnosticMonitor();
     private TextView monitorDetail, importProgress;
     private AlertDialog importProgressDialog;
@@ -212,6 +213,9 @@ public final class MainActivity extends Activity implements MidiController.Liste
         lcd.setBackgroundColor(Color.rgb(15,57,113)); lcd.setGravity(Gravity.CENTER);
         patchRow.addView(lcd, new LinearLayout.LayoutParams(0, dp(62), 5)); lcd.setOnClickListener(v -> patchDialog());
         button(patchRow, "▶", () -> changePatch(1));
+        LinearLayout favoriteRow = row(body);
+        favoriteButton = button(favoriteRow, "☆ Guardar favorito", this::saveFavorite);
+        button(favoriteRow, "★ Favoritos", () -> bankDialog(true));
         LinearLayout files = row(body);
         button(files, "Importar", this::importDialog);
         button(files, "Exportar .sy1", this::exportDialog);
@@ -327,9 +331,14 @@ public final class MainActivity extends Activity implements MidiController.Liste
             int bank = Math.floorMod(bankIndex + delta, banks.size()); applyPatch(bank, banks.get(bank).first());
         }
     }
-    private void bankDialog() {
+    private void bankDialog() { bankDialog(false); }
+    private void bankDialog(boolean favoritesOnly) {
         List<PatchStore.Bank> snapshot = banks;
         if (snapshot.isEmpty()) return;
+        if (favoritesOnly && snapshot.stream().noneMatch(FavoriteStore::isFavorite)) {
+            message("Todavía no hay favoritos. Elegí un sonido y pulsá ☆ Guardar favorito.");
+            return;
+        }
         LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL);
         EditText search = new EditText(this); search.setSingleLine(true); search.setHint("Buscar banco o carpeta…"); panel.addView(search);
         ListView list = new ListView(this); panel.addView(list,new LinearLayout.LayoutParams(-1,dp(300)));
@@ -338,7 +347,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
         Runnable filter = () -> {
             String query = search.getText().toString().toLowerCase(Locale.ROOT);
             visible.clear(); adapter.clear();
-            for (int i=0;i<snapshot.size();++i) if (snapshot.get(i).name.toLowerCase(Locale.ROOT).contains(query)) {
+            for (int i=0;i<snapshot.size();++i) if ((!favoritesOnly || FavoriteStore.isFavorite(snapshot.get(i))) && snapshot.get(i).name.toLowerCase(Locale.ROOT).contains(query)) {
                 visible.add(i); adapter.add(snapshot.get(i).name);
             }
             adapter.notifyDataSetChanged();
@@ -349,7 +358,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
             public void afterTextChanged(Editable text) { }
         });
         filter.run();
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Bancos ("+snapshot.size()+")").setView(panel).setNegativeButton("Cerrar",null).create();
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(favoritesOnly ? "★ Favoritos" : "Bancos ("+snapshot.size()+")").setView(panel).setNegativeButton("Cerrar",null).create();
         list.setOnItemClickListener((p,v,position,id) -> {
             int index = findBank(banks,snapshot.get(visible.get(position)).key);
             applyPatch(index,banks.get(index).first()); dialog.dismiss(); patchDialog();
@@ -361,8 +370,40 @@ public final class MainActivity extends Activity implements MidiController.Liste
         int selectedBank = bankIndex; PatchStore.Bank bank = list.get(selectedBank);
         List<Integer> positions = new ArrayList<>(); List<String> names = new ArrayList<>();
         for (int i = 0; i < 128; ++i) if (bank.slots[i] != null) { positions.add(i); names.add(String.format(Locale.ROOT, "%03d · %s", i+1, bank.slots[i].name)); }
-        new AlertDialog.Builder(this).setTitle(bank.name).setItems(names.toArray(new String[0]), (d, which) -> applyPatch(selectedBank, positions.get(which))).setNegativeButton("Cerrar", null).show();
+        new AlertDialog.Builder(this).setTitle(bank.name).setItems(names.toArray(new String[0]), (d, which) -> applyPatch(findBank(banks, bank.key), positions.get(which))).setNegativeButton("Cerrar", null).show();
     }
+    private void saveFavorite() {
+        if (destroyed || engine == null || favoriteSaving || importing) return;
+        final String snapshot = engine.snapshot();
+        favoriteSaving = true;
+        favoriteButton.setEnabled(false); favoriteButton.setText("Guardando…");
+        // The snapshot is captured at tap time, so browsing the next patch
+        // immediately cannot save a different sound. Only file I/O is queued.
+        worker.execute(() -> {
+            try {
+                if (destroyed || engine == null || store == null) return;
+                FavoriteStore.Saved saved = store.favorites.save(snapshot);
+                List<PatchStore.Bank> favoriteBanks = store.favorites.scan();
+                synchronized (libraryLock) {
+                    String currentKey = banks.isEmpty() ? ":init" : banks.get(bankIndex).key;
+                    // Avoid rescanning tens of thousands of imported patches.
+                    List<PatchStore.Bank> updated = new ArrayList<>();
+                    for (PatchStore.Bank bank : banks) if (!FavoriteStore.isFavorite(bank)) updated.add(bank);
+                    updated.addAll(Math.min(1, updated.size()), favoriteBanks);
+                    banks = Collections.unmodifiableList(updated);
+                    bankIndex = findBank(banks, currentKey);
+                }
+                message(saved.alreadySaved ? "★ Este sonido ya está guardado en Favoritos." :
+                    "★ Guardado en Favoritos con tus ajustes. El banco original no se modificó.");
+                ui.post(() -> { if (!destroyed) { refreshLcd(); scheduleSave(); } });
+            } catch (Exception ex) { message("No se pudo guardar el favorito: " + ex.getMessage()); }
+            finally { ui.post(() -> {
+                favoriteSaving = false;
+                if (!destroyed) { favoriteButton.setEnabled(true); favoriteButton.setText("☆ Guardar favorito"); }
+            }); }
+        });
+    }
+
     private void allParameters() {
         NativeEngine e = engine; if (e == null) return;
         int[] values = e.values(); String[] labels = new String[info.length];

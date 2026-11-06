@@ -1,68 +1,4 @@
-CHANGES = [
-    ('android/test-host.sh', '3318d537e441e1e918f92e553650ce8444ca4a04', '77072253a7a6548bb01a05d413f401a3901dcd22', [
-        (6, 7, r'''javac -encoding UTF-8 -d "$BUILD" "$JAVA/MidiByteParser.java" "$JAVA/PatchStore.java" "$JAVA/FavoriteStore.java" "$JAVA/FolderImporter.java" "$JAVA/DiagnosticMonitor.java" "$ROOT/android/tests/MidiParserTest.java" "$ROOT/android/tests/PatchStoreTest.java" "$ROOT/android/tests/FavoriteStoreTest.java" "$ROOT/android/tests/FolderImporterTest.java" "$ROOT/android/tests/DiagnosticMonitorTest.java"
-'''),
-        (9, 9, r'''java -cp "$BUILD" com.rinoize.risynth2.FavoriteStoreTest
-'''),
-    ]),
-    ('android/test-upstream.sh', '9e20ce1a98701f86f70aae2c27121f872821562a', 'e834ae7f36f74227808ae11d7174cee310c411b6', [
-        (14, 16, r'''# Only the unchanged desktop library failure is allowed. DSP changes are separately
-# checked by test-engine.sh against the previous shipped engine, sample by sample.
-git -C "$ROOT" diff --exit-code "$BASE" HEAD -- EngineCore/PatchLibrary.hpp EngineCore/Params.hpp EngineCore/Sy1Codec.hpp EngineCore/TextEncoding.hpp EngineCore/LegacyTables.hpp EngineCore/MeasuredTables.hpp EngineCoreTests
-'''),
-        (31, 32, r'''  printf '\n### Known upstream Linux library test failure\n\n52/53 upstream tests pass. `PatchManagerMoveRenamesAndSwaps` fails identically on the original `48322f7` baseline. The desktop library, its dependencies and EngineCoreTests are unchanged; DSP optimizations have a separate exact-audio regression. This desktop bank-move implementation is not used by the Android port. Any different failure remains fatal.\n' >> "$GITHUB_STEP_SUMMARY"
-'''),
-    ]),
-    ('android/tests/FavoriteStoreTest.java', None, '19f6d87301d2e22114fbef36f02a26a0af100b04', [
-        (0, 0, r'''package com.rinoize.risynth2;
-import java.io.*;
-import java.nio.file.*;
-import java.nio.charset.StandardCharsets;
-import java.util.*;
-public final class FavoriteStoreTest {
-    static void check(boolean value,String message) { if(!value)throw new AssertionError(message); }
-    static String patch(int i) { return "Pad "+i+"\nver=112\n0,1\n19,"+(i%128)+"\n"; }
-    public static void main(String[] args) throws Exception {
-        File base=Files.createTempDirectory("risynth2-favorites-").toFile();
-        try {
-            PatchStore store=new PatchStore(new File(base,"banks"),new File(base,"cache"));
-            check(store.scan(patch(0)).size()==1,"empty favorites must not change INIT");
-            store.importFile(new ByteArrayInputStream(patch(777).getBytes(StandardCharsets.UTF_8)),"original.sy1");
-            PatchStore.Bank original=store.scan(patch(0)).get(1);
-            for(int i=0;i<260;++i) {
-                FavoriteStore.Saved saved=store.favorites.save(patch(i));
-                check(!saved.alreadySaved && saved.slot==i%128,"pagination/slots");
-            }
-            check(store.favorites.save(patch(2)).alreadySaved,"identical repeated press must not duplicate");
-            String edited=patch(2)+"20,95\n";
-            check(!store.favorites.save(edited).alreadySaved,"edited same-name patch needs independent copy");
-            String hostile="../../Fuera ★\nver=112\n0,1\n";
-            store.favorites.save(hostile);
-            List<PatchStore.Bank> all=store.scan(patch(0));
-            check(all.size()==5 && FavoriteStore.isFavorite(all.get(1)),"favorites pinned, 3 pages, original retained");
-            check(all.get(1).slots[2].readText().equals(patch(2)),"original snapshot retained");
-            check(all.get(3).slots[4].readText().equals(edited),"edits preserved");
-            check(all.get(3).slots[5].readText().equals(hostile),"unicode and path-like name preserved safely");
-            check(original.slots[0].readText().equals(patch(777)),"source bank untouched");
-            check(all.get(1).slots[0].isLazy(),"lazy favorites data");
-            check(!new File(base,"Fuera ★").exists(),"no path injection");
-            PatchStore reopened=new PatchStore(new File(base,"banks"),new File(base,"cache"));
-            check(reopened.favorites.save(edited).alreadySaved,"dedup survives restart");
-            File interrupted=new File(base,"banks/.favorites/.pending-interrupted");interrupted.mkdir();
-            Files.writeString(new File(interrupted,"patch.sy1").toPath(),patch(999));
-            check(reopened.favorites.scan().size()==3,"incomplete staging is never visible");
-            try {reopened.favorites.save("invalid");throw new AssertionError("invalid accepted");}catch(IOException expected){}
-            File blocked=new File(base,"blocked");Files.writeString(blocked.toPath(),"file");
-            try {new FavoriteStore(blocked).save(patch(1));throw new AssertionError("blocked path accepted");}catch(IOException expected){}
-            check(reopened.scan(patch(0)).size()==5,"failed save leaves library untouched");
-            System.out.println("Favorites: 262 snapshots, repeat dedup, edits, restart, 128-slot pages, lazy reads, source safety and failed/partial writes OK");
-        } finally {try(var paths=Files.walk(base.toPath())) {paths.sorted(Comparator.reverseOrder()).forEach(p->{try{Files.delete(p);}catch(IOException e){throw new UncheckedIOException(e);}});}}
-    }
-}
-'''),
-    ]),
-    ('android/tests/engine_compare.cpp', None, '92f09d1e00aeba399d014d9acba1aea06bdffe6a', [
-        (0, 0, r'''// Same source renders both namespaces. Baseline headers are prepared by test-engine.sh.
+// Same source renders both namespaces. Baseline headers are prepared by test-engine.sh.
 #include "baseline/Synth.hpp"
 #include "EngineCore/Synth.hpp"
 #include "EngineCore/InitPatch.hpp"
@@ -172,6 +108,3 @@ int main(int argc,char**) {
         std::printf("%-20s baseline %.6f s optimized %.6f s work reduction %+.1f%%\n",c.name,a[2],b[2],100*(1-b[2]/a[2]));
     }
 }
-'''),
-    ]),
-]

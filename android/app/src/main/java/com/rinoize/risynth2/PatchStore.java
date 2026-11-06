@@ -46,8 +46,10 @@ final class PatchStore {
         Entry(String file, String text) { this.file = file; this.text = text; }
     }
     private final File root, cache;
+    final FavoriteStore favorites;
     PatchStore(File root, File cache) throws IOException {
         this.root = root; this.cache = cache;
+        favorites = new FavoriteStore(new File(root, ".favorites"));
         if ((!root.isDirectory() && !root.mkdirs()) || (!cache.isDirectory() && !cache.mkdirs())) throw new IOException("No se pudo crear la biblioteca");
     }
     List<Bank> scan(String init) throws IOException {
@@ -81,6 +83,9 @@ final class PatchStore {
             }
         }
         if (result.size() > 1) result.subList(1, result.size()).sort(Comparator.comparing(b -> b.name.toLowerCase(Locale.ROOT)));
+        // Keep INIT at zero; favorites are immediately accessible before
+        // imported banks. Stable keys retain the current selection on rescan.
+        result.addAll(1, favorites.scan());
         return Collections.unmodifiableList(result);
     }
     int importFile(InputStream input, String filename) throws IOException { return importFile(input,filename,()->false); }

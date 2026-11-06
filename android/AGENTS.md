@@ -21,3 +21,9 @@ Private banks have `index.tsv` metadata (versioned header, slot and Base64 displ
 ## Signing / package identity
 
 0.1.0's development signer was not retained (wrong cache path). `-Prisynth2SideBySide=true` builds package `com.rinoize.risynth2.preview`, label RiSynth2 Preview, as a non-destructive parallel install. Do not claim the normal APK can update 0.1.0. Keep Preview ID stable across future Preview updates. JNI namespace remains `com.rinoize.risynth2`. CI supplies RISYNTH2_KEYSTORE from prepare-signing.sh and caches the exact containing directory. Pin/check only the public certificate SHA-256; never upload/commit the private key. A lost pinned key is a build failure, never permission to silently generate a replacement.
+
+## 0.3 exact optimizations / favorites
+
+The user explicitly requested engine optimization. Envelope.hpp, Voice.hpp, Filter.hpp and Synth.hpp now use exact-input memoization and shared global pitch LFOs; all other DSP files/tables are unchanged. `test-engine.sh` compares 67 scenarios bit-for-bit against shipped 0.2.0 (`450c699`) and records a separate host benchmark. Do not replace formulas, lower quality, or loosen equality to make a failing regression pass. Gains are patch-specific; never claim a host benchmark is a Tab A9 measurement.
+
+`FavoriteStore` keeps immutable content-addressed snapshots under the private bank root's hidden `.favorites` directory. Staging+rename commits both patch and name. Repeated identical saves deduplicate; edited copies never overwrite originals. 128-slot pages use stable `:favorites:N` keys and are inserted after INIT. Only the worker performs disk I/O. NativeEngine.snapshot captures matching name+parameter state under one JNI-entry lock at tap time. Saving must not switch the sound or accidentally save the next browsed patch. Do not change the Preview application ID or pinned signer.
