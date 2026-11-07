@@ -1,10 +1,10 @@
-# RiSynth2 Android 0.3.1
+# RiSynth2 Android 0.3.2
 
 Independent Android adaptation of the Oxo Synth2 C++ engine, compatible with Synth1 `.sy1` patches. Not an official Oxo Music or Daichi Laboratory application. Original engine and MIT notices are retained. No original Synth1 binaries, artwork, ROMs or third-party preset banks are bundled.
 
 ## Install / update
 
-GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.3.1-preview-arm64**. Preview and standard builds are separate artifacts, each containing one APK. Install Preview 0.3.1 over Preview 0.2.0 or 0.3.0 without uninstalling or reimporting. **For users of 0.1.0, install `RiSynth2-0.3.1-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
+GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.3.2-preview-arm64**. Preview and standard builds are separate artifacts, each containing one APK. Install Preview 0.3.2 over Preview 0.2.0, 0.3.0 or 0.3.1 without uninstalling or reimporting. **For users of 0.1.0, install `RiSynth2-0.3.2-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
 
 The 0.1.0 workflow attempted to cache a signing-key path that did not exist, so its signing key was not preserved. The normal 0.2.0 APK (`com.rinoize.risynth2`) therefore cannot update that earlier installation in place. Do not uninstall 0.1.0 merely to try it. Preview is the non-destructive alternative and its future updates must retain the Preview package ID.
 
@@ -12,13 +12,19 @@ CI now explicitly provisions/uses `~/.android/risynth2-ci/debug.keystore`, cache
 
 Target: Samsung Galaxy Tab A9 SM-X110, ARM64, Android 13+. The user reported glitches at 512 frames and better results at 1024 in 0.1.0. This release adds measurements, not a claim that those glitches have been fixed. New installations request 1024 frames; an existing explicitly saved setting is kept. Choose **Audio → 1024 frames** for the first comparison. Actual buffer size can differ from the request.
 
-## New in 0.3.1
+## New in 0.3.2
+
+**Audio → Ayuda de rendimiento (ADPF · experimental)** is an optional, saved OFF/ON setting (initially OFF). The monitor shows whether the actual audio-thread hint session is active or unavailable; active does not guarantee a faster core or fewer glitches. Android service calls run on a separate worker, never in the audio callback. No affinity is forced, no synthesis work is moved to that worker, and no buffer is silently changed. Compare the same patch and buffer, then examine peaks, OV, XRuns and thermal status, not just average CPU. The feature can increase power use/heat.
+
+LPDL now reuses the exact double-precision logarithms of its fixed coefficient table, without changing the sound or quality. This targets LPDL parameter changes, not every patch. See [PERFORMANCE032.md](PERFORMANCE032.md) for the two independent changes, failure handling, headroom target, tests and comparison procedure. Install Preview 0.3.2 **over** your existing Preview, without uninstalling.
+
+## Features retained from 0.3.x
 
 **☆ Guardar favorito** saves an independent .sy1 copy with the current parameter edits. Repeated presses do not duplicate an identical snapshot; changed settings create a new copy even with the same name. **★ Favoritos** opens the collection, also pinned after INIT in the bank list. Collections larger than 128 sounds are paged automatically. Saving leaves the source and current program untouched. Favorites are private app data; export important patches before uninstalling/clearing storage.
 
 The engine now reuses exact calculations for envelopes, tuning and static filters, and shares global pitch-LFO work between voices. No lower-quality mode or reduced polyphony is used. Automated tests compare output sample by sample against 0.2.0. Performance is patch-dependent and needs tablet verification: see [OPTIMIZATION.md](OPTIMIZATION.md). Increasing the buffer alone does not reduce the synthesis work per second.
 
-Install the **Preview 0.3.1** APK over **Preview 0.2.0** without uninstalling: package ID and pinned signing certificate are retained. It remains separate from the old 0.1.0 application.
+Install the **Preview 0.3.2** APK over **Preview 0.2.0/0.3.x** without uninstalling: package ID and pinned signing certificate are retained. It remains separate from the old 0.1.0 application.
 
 ## Always-visible audio / CPU monitor
 

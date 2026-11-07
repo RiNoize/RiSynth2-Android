@@ -1,8 +1,8 @@
-# RiSynth2 Android 0.3.1
+# RiSynth2 Android 0.3.2
 
 La adaptación Android está en [`android/`](android/README.md). Requiere **Android 13 o posterior y ARM64**; está orientada a la Samsung Galaxy Tab A9, incluido Android 16.
 
-**Descarga:** Actions → Build Android APK → una ejecución terminada correctamente → Artifacts → RiSynth2-0.3.1-preview-arm64. Descomprimir el ZIP. Si tenés la 0.1.0, instalar **RiSynth2-0.3.1-preview-arm64.apk**: aparecerá como **RiSynth2 Preview**, sin reemplazar ni borrar la anterior. Los bancos se importan nuevamente desde sus carpetas; los datos privados no se comparten entre ambas aplicaciones. La firma de 0.1.0 no quedó preservada por un error de caché; la APK normal no puede actualizarla directamente. No desinstales la anterior para probar esta versión.
+**Descarga:** Actions → Build Android APK → una ejecución terminada correctamente → Artifacts → RiSynth2-0.3.2-preview-arm64. Descomprimir el ZIP. Si tenés la 0.1.0, instalar **RiSynth2-0.3.2-preview-arm64.apk**: aparecerá como **RiSynth2 Preview**, sin reemplazar ni borrar la anterior. Los bancos se importan nuevamente desde sus carpetas; los datos privados no se comparten entre ambas aplicaciones. La firma de 0.1.0 no quedó preservada por un error de caché; la APK normal no puede actualizarla directamente. No desinstales la anterior para probar esta versión.
 
 Esta versión agrega un **monitor fijo de CPU app, render, overruns y XRuns**, con informe copiable y reinicio de contadores. **Importar → Carpeta completa** permite elegir la carpeta madre de todos los bancos, recorrer sus subcarpetas y conservar los nombres y números de programa. Incluye progreso, cancelación y buscador de bancos. La biblioteca carga el contenido de cada patch al seleccionarlo.
 
@@ -23,3 +23,11 @@ La variante **Preview** y la normal tienen el mismo motor; Preview es la actuali
 Se precalculan los coeficientes de interpolación de los osciladores, se comparten más modulaciones globales, se elige el cálculo de forma de onda fuera del bucle por muestra y se evitan divisiones innecesarias. No se reduce polifonía, calidad, efectos ni frecuencia de muestreo. El beneficio depende del patch; las pruebas de servidor ARM64 no son medidas en la Tab A9.
 
 El detalle del monitor muestra **Voces/LFO** y **Efectos/salida** por separado. **Copiar informe + patch** agrega los parámetros del sonido actual al informe; no envía archivos automáticamente. Ver android/OPTIMIZATION031.md.
+
+## Nuevo en 0.3.2: avisos de rendimiento y LPDL
+
+Instalá **Preview 0.3.2 encima de Preview 0.3.1**, sin desinstalar: conserva bancos, favoritos y ajustes. En **Audio → Ayuda de rendimiento (ADPF · experimental)** podés activar/desactivar los avisos a Android. Inicialmente están desactivados para comparar. El monitor informa **ADPF OFF / esperando audio / sesión activa / no disponible / error / detenido**. Una sesión activa confirma llamadas aceptadas, no garantiza que Samsung mejore el rendimiento.
+
+Las llamadas a Android se hacen en un hilo auxiliar; no bloquean ni cambian los cálculos del callback de audio. No se fuerza afinidad, no se baja calidad ni polifonía, ni se cambia el buffer a escondidas. Puede aumentar consumo y calor. Compará el mismo pad con 2048 frames, primero OFF y luego ON, observando picos, OV, XRuns y estado térmico. **Copiar informe + patch** incluye el estado y los contadores ADPF.
+
+Además se precalculan los mismos logaritmos del LPDL, con doble precisión y validación bit a bit contra 0.3.1. Esa mejora afecta a ese filtro, no a todos los patches. Ver `android/PERFORMANCE032.md`.

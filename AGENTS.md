@@ -692,3 +692,7 @@ original AU; keeps both renders for listening).
 ## RiSynth2 Android 0.3.0 fork
 
 Android-specific documentation is in android/AGENTS.md. At the user's request, the fork now memoizes exact envelope/voice/filter inputs and shares global pitch-LFO calculations; original measured tables/formulas remain. `android/test-engine.sh` is the mandatory bit-for-bit regression against the 0.2.0 shipped engine, with separate non-device host benchmarks. Favorites are immutable .sy1 snapshots managed outside the audio thread. See android/OPTIMIZATION.md.
+
+## RiSynth2 Android 0.3.2 update
+
+Current port rules and baseline are in `android/AGENTS.md` and `android/PERFORMANCE032.md`. This release adds opt-in asynchronous APerformanceHint reporting plus exact LPDL log precomputation. Never put session creation, service calls or waits in the audio callback; never infer actual tablet acceleration from API success or a host benchmark. `android/test-engine.sh` compares with shipped 0.3.1, with ARM64 and x86 strict regressions.

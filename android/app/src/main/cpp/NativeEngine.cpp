@@ -1,5 +1,7 @@
 #include <jni.h>
 #include <aaudio/AAudio.h>
+#include <unistd.h>
+#include "AndroidHintBackend.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -24,6 +26,8 @@ struct Event {
 class Engine {
 public:
     Synth synth;
+    risynth2::AndroidHintBackend hintBackend;
+    risynth2::AudioPerformanceHints hints{hintBackend};
     EventQueue<Event, 512> events;
     std::array<std::atomic<int>, kParamCount> parameters{};
     std::atomic<bool> panic{false}, active{false};
@@ -81,6 +85,7 @@ public:
         auto* e = static_cast<Engine*>(user);
         e->error.store(result);
         e->active.store(false);
+        e->hints.requestStop();
         // Do NOT close/reopen from this callback. Java's control worker does it.
     }
     static aaudio_data_callback_result_t onData(AAudioStream*, void* user, void* audio, int32_t frames) {
@@ -109,8 +114,16 @@ public:
         int count = 0;
         for (int i = 0; i < kMaxVoices; ++i, state >>= 2) count += (state & 3) != 0;
         e.voices.store(count, std::memory_order_relaxed);
-        const auto elapsed = std::chrono::steady_clock::now() - begin;
-        const auto nanos = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+        auto finish = std::chrono::steady_clock::now();
+        if (e.hints.accepting() && frames > 0) {
+            const int64_t workNs = std::max<int64_t>(1, std::chrono::duration_cast<std::chrono::nanoseconds>(finish - begin).count());
+            const int64_t doneNs = std::chrono::duration_cast<std::chrono::nanoseconds>(finish.time_since_epoch()).count();
+            // The kernel TID is taken HERE, not from Java/UI or the hint worker.
+            // Only POD publication: no ADPF/Binder call, lock or allocation.
+            e.hints.submit({int32_t(gettid()), int64_t(double(frames) * 1.0e9 / e.synth.SampleRate()), workNs, doneNs});
+            finish = std::chrono::steady_clock::now(); // total Render includes publication overhead
+        }
+        const auto nanos = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(finish - begin).count());
         const double seconds = double(nanos) / 1.0e9;
         e.metrics.record(nanos, frames, e.synth.SampleRate());
         const double percent = frames > 0 ? seconds * e.synth.SampleRate() * 100.0 / frames : 0.0;
@@ -126,11 +139,12 @@ public:
             AAudioStream_close(stream); // waits until data callbacks have stopped
             stream = nullptr;
         }
+        hints.stop(); // callback stopped before joining/closing the hint session
         drain(false);
         synth.Reset();
         voices.store(0);
     }
-    std::string start(int device, int requestedBuffer, bool lowLatency) {
+    std::string start(int device, int requestedBuffer, bool lowLatency, bool performanceHints) {
         stop();
         error.store(0); clips.store(0); dropped.store(0);
         renderPercent.store(0); peakPercent.store(0);
@@ -162,6 +176,7 @@ public:
         const int burst = std::max(1, AAudioStream_getFramesPerBurst(stream));
         AAudioStream_setBufferSizeInFrames(stream, std::max(requestedBuffer, burst * 2));
         synth.Reset();
+        hints.start(performanceHints); // worker may fail; normal audio still starts
         active.store(true);
         result = AAudioStream_requestStart(stream);
         if (result != AAUDIO_OK) { stop(); return AAudio_convertResultToText(result); }
@@ -188,8 +203,8 @@ JNIEXPORT jlong JNICALL Java_com_rinoize_risynth2_NativeEngine_create(JNIEnv* en
     catch (const std::exception& e) { throwJava(env, e.what()); return 0; }
 }
 JNIEXPORT void JNICALL Java_com_rinoize_risynth2_NativeEngine_destroy(JNIEnv*, jclass, jlong h) { delete engine(h); }
-JNIEXPORT jstring JNICALL Java_com_rinoize_risynth2_NativeEngine_startNative(JNIEnv* env, jclass, jlong h, jint device, jint buffer, jboolean low) {
-    try { return env->NewStringUTF(engine(h)->start(device, buffer, low).c_str()); }
+JNIEXPORT jstring JNICALL Java_com_rinoize_risynth2_NativeEngine_startNative(JNIEnv* env, jclass, jlong h, jint device, jint buffer, jboolean low, jboolean hint) {
+    try { return env->NewStringUTF(engine(h)->start(device, buffer, low, hint).c_str()); }
     catch (const std::exception& e) { engine(h)->stop(); return env->NewStringUTF(e.what()); }
 }
 JNIEXPORT void JNICALL Java_com_rinoize_risynth2_NativeEngine_stopNative(JNIEnv*, jclass, jlong h) { engine(h)->stop(); }
@@ -268,7 +283,12 @@ JNIEXPORT jdoubleArray JNICALL Java_com_rinoize_risynth2_NativeEngine_statsNativ
         double(e.metrics.lastFrames.load(std::memory_order_relaxed)),
         e.stream ? double(AAudioStream_getBufferCapacityInFrames(e.stream)) : 0.0,
         double(e.streamGeneration),
-        double(e.voiceNanos.load(std::memory_order_relaxed)), double(e.effectNanos.load(std::memory_order_relaxed))
+        double(e.voiceNanos.load(std::memory_order_relaxed)), double(e.effectNanos.load(std::memory_order_relaxed)),
+        double(e.hints.stats.state.load()), double(e.hints.stats.tid.load()),
+        double(e.hints.stats.targetNs.load()), double(e.hints.stats.workNs.load()),
+        double(e.hints.stats.reports.load()), double(e.hints.stats.dropped.load()),
+        double(e.hints.stats.skipped.load()), double(e.hints.stats.error.load()),
+        double(e.hints.stats.lagNs.load())
     };
     constexpr int count = int(sizeof(s) / sizeof(s[0]));
     auto a = env->NewDoubleArray(count); if (a) env->SetDoubleArrayRegion(a, 0, count, s); return a;

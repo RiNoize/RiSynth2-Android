@@ -43,7 +43,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private AudioFocusRequest focus;
     private SharedPreferences prefs;
     private int requestedFrames = 1024, routePreference = 0, volume = 48, bpm = 120;
-    private boolean lowLatency = true, refreshing;
+    private boolean lowLatency = true, performanceHints, refreshing;
     private String pendingExport, initialPatch;
     private String[] info;
     private LinearLayout root, body;
@@ -138,6 +138,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
         prefs = getSharedPreferences("risynth2", MODE_PRIVATE);
         volume = prefs.getInt("volume", 48); bpm = prefs.getInt("tempo", 120);
         requestedFrames = prefs.getInt("frames", 1024); lowLatency = prefs.getBoolean("lowLatency", true);
+        performanceHints = prefs.getBoolean("performanceHints", false); // explicit A/B opt-in
         // Physical device IDs are session-specific: only local/automatic preference is persisted.
         routePreference = prefs.getBoolean("automaticRoute", false) ? -1 : 0;
         audioManager = (AudioManager)getSystemService(AUDIO_SERVICE);
@@ -430,10 +431,14 @@ public final class MainActivity extends Activity implements MidiController.Liste
         int[] frameOptions = {256,512,1024,2048}; Spinner buffer = spinner(panel, new String[]{"256 frames", "512 frames", "1024 frames", "2048 frames"});
         for (int i = 0; i < frameOptions.length; ++i) if (frameOptions[i] == requestedFrames) buffer.setSelection(i);
         CheckBox low = new CheckBox(this); low.setText("Solicitar baja latencia (modo compartido)"); low.setChecked(lowLatency); panel.addView(low);
+        CheckBox hints = new CheckBox(this); hints.setText("Ayuda de rendimiento (ADPF · experimental)");
+        hints.setChecked(performanceHints); panel.addView(hints);
+        panel.addView(text("Avisa a Android del trabajo del hilo de audio. Puede no estar disponible o no mejorar los cortes. Puede aumentar consumo/calor. Ver estado ADPF en el monitor.", 12));
         panel.addView(text("Frecuencia nativa del dispositivo. Los cambios cierran y reabren el audio. No hay autoajuste oculto.", 13));
-        new AlertDialog.Builder(this).setTitle("Audio").setView(panel).setNegativeButton("Cancelar", null).setPositiveButton("Aplicar", (d,w) -> {
-            routePreference = ids.get(output.getSelectedItemPosition()); requestedFrames = frameOptions[buffer.getSelectedItemPosition()]; lowLatency = low.isChecked();
-            prefs.edit().putInt("frames",requestedFrames).putBoolean("lowLatency",lowLatency).putBoolean("automaticRoute", routePreference == -1).apply();
+        ScrollView audioScroll = new ScrollView(this); audioScroll.addView(panel);
+        new AlertDialog.Builder(this).setTitle("Audio").setView(audioScroll).setNegativeButton("Cancelar", null).setPositiveButton("Aplicar", (d,w) -> {
+            routePreference = ids.get(output.getSelectedItemPosition()); requestedFrames = frameOptions[buffer.getSelectedItemPosition()]; lowLatency = low.isChecked(); performanceHints = hints.isChecked();
+            prefs.edit().putInt("frames",requestedFrames).putBoolean("lowLatency",lowLatency).putBoolean("performanceHints",performanceHints).putBoolean("automaticRoute", routePreference == -1).apply();
             if (wantsAudio && foreground) startAudio();
         }).show();
     }
@@ -453,11 +458,11 @@ public final class MainActivity extends Activity implements MidiController.Liste
         final int device;
         try { device = resolveDevice(); } catch (Exception e) { message(e.getMessage()); return; }
         if (audioManager.requestAudioFocus(focus) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { message("No se obtuvo el foco de audio."); return; }
-        final int frames = requestedFrames; final boolean low = lowLatency;
+        final int frames = requestedFrames; final boolean low = lowLatency, hint = performanceHints;
         notice.setText("Preparando audio…"); getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         worker.execute(() -> {
             if (!foreground || !wantsAudio || destroyed || importing || engine == null) return;
-            String error = engine.start(device, frames, low);
+            String error = engine.start(device, frames, low, hint);
             if (!error.isEmpty()) message("No se pudo iniciar: " + error);
             else message("Audio listo. Comienza con volumen bajo.");
         });

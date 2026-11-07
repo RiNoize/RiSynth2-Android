@@ -7,9 +7,9 @@ final class NativeEngine implements AutoCloseable {
     private long handle = create();
     private boolean streaming;
     private String loadedName = "INIT";
-    synchronized String start(int device, int frames, boolean lowLatency) {
+    synchronized String start(int device, int frames, boolean lowLatency, boolean performanceHints) {
         if (handle == 0) return "Motor cerrado";
-        String error = startNative(handle, device, frames, lowLatency);
+        String error = startNative(handle, device, frames, lowLatency, performanceHints);
         streaming = error.isEmpty();
         return error;
     }
@@ -34,7 +34,7 @@ final class NativeEngine implements AutoCloseable {
     synchronized String save(String name) { return handle == 0 ? "" : saveNative(handle, name); }
     synchronized int[] values() { return handle == 0 ? new int[99] : valuesNative(handle); }
     synchronized double[] stats() {
-        if (handle == 0) return new double[23];
+        if (handle == 0) return new double[32];
         double[] result = statsNative(handle);
         if (result[0] == 0) streaming = false;
         return result;
@@ -44,7 +44,7 @@ final class NativeEngine implements AutoCloseable {
     static native String[] parameterInfo();
     private static native long create();
     private static native void destroy(long h);
-    private static native String startNative(long h, int device, int frames, boolean lowLatency);
+    private static native String startNative(long h, int device, int frames, boolean lowLatency, boolean performanceHints);
     private static native void stopNative(long h);
     private static native void midiNative(long h, int status, int d1, int d2);
     private static native void panicNative(long h);

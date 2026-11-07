@@ -28,6 +28,14 @@ public final class DiagnosticMonitorTest {
         if(!m.detail().contains("Voces/LFO 40.0% · Efectos/salida 5.0%")) throw new AssertionError("stage timing denominator");
         m.reset(s,200500,20250); m.sample(s,201000,20250,1024,"stopped");
         if(!m.detail().contains("Voces/LFO 0.0%")) throw new AssertionError("stale stage counters");
+        s=new double[32];s[0]=1;s[1]=48000;s[20]=4;s[23]=2;s[24]=321;s[25]=8533333;s[26]=5000000;s[27]=50;s[31]=750000;
+        m.sample(s,202000,20250,2048,"hints");
+        if(!m.compact().contains("ADPF sesión activa") || !m.detail().contains("TID de audio 321") ||
+            !m.detail().contains("Objetivo: 8.533 ms") || !m.detail().contains("NO confirma")) throw new AssertionError("honest ADPF diagnostics");
+        s[23]=3;s[30]=-2;m.sample(s,202500,20250,2048,"unsupported");
+        if(!m.compact().contains("ADPF no disponible")) throw new AssertionError("must not claim unavailable hints are active");
+        s[23]=0;m.sample(s,203000,20250,2048,"off");
+        if(!m.compact().contains("ADPF OFF")) throw new AssertionError("ADPF toggle state");
         System.out.println("Diagnostic monitor: CPU scales, render, irregular sampling, resets, unsupported xruns and bounded log OK");
     }
 }
