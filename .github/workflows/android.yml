@@ -12,7 +12,23 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  arm-regression:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Native ARM64 exact audio and throughput comparison
+        run: bash android/test-engine.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-arm64-engine-report
+          path: android/app/build/reports/engine-performance.txt
+          if-no-files-found: error
   build:
+    needs: arm-regression
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -56,22 +72,28 @@ jobs:
       - name: Build parallel APK without replacing 0.1.0
         working-directory: android
         run: |
-          mkdir -p ../dist
-          cp app/build/outputs/apk/release/app-release.apk ../dist/RiSynth2-0.3.0-arm64.apk
+          mkdir -p ../dist/standard ../dist/preview
+          cp app/build/outputs/apk/release/app-release.apk ../dist/standard/RiSynth2-0.3.1-arm64.apk
           gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
-          cp app/build/outputs/apk/release/app-release.apk ../dist/RiSynth2-0.3.0-preview-arm64.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/preview/RiSynth2-0.3.1-preview-arm64.apk
       - name: Package APK
         run: |
-          for apk in dist/*.apk; do
+          for apk in dist/*/*.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
             "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$apk"
           done
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/RiSynth2-0.3.0-preview-arm64.apk | grep -E "^(package:|application-label:)"
-          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/preview/RiSynth2-0.3.1-preview-arm64.apk | grep -E "^(package:|application-label:)"
+          for dir in dist/standard dist/preview; do (cd "$dir" && sha256sum *.apk > SHA256SUMS.txt); done
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.3.0-arm64
-          path: dist/*
+          name: RiSynth2-0.3.1-preview-arm64
+          path: dist/preview/*
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RiSynth2-0.3.1-standard-arm64
+          path: dist/standard/*
           if-no-files-found: error
           retention-days: 30
       - name: Upload diagnostics
