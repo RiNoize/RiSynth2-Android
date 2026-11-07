@@ -35,12 +35,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply reviewed changes and record exact candidate
+      - name: Apply reviewed source and record exact candidate
         run: |
           python3 .ci/apply031.py
+          # The Actions token has contents permission, not workflows permission.
+          # Final workflow changes are published separately by the repository connector.
+          git restore -- .github/workflows/android.yml
+          python3 -c "from pathlib import Path; p=Path('android/README.md'); s=p.read_text(); s=s.replace('Two APKs are included.', 'Preview and standard builds are separate artifacts, each containing one APK. Install Preview 0.3.1 over Preview 0.2.0 or 0.3.0 without uninstalling or reimporting.'); p.write_text(s)"
           git config user.name RiNoize
           git config user.email 70249646+RiNoize@users.noreply.github.com
-          git add EngineCore android ANDROID.md .github/workflows/android.yml
+          git add EngineCore android ANDROID.md
           git commit -m 'Optimize per-sample DSP in RiSynth2 0.3.1' -m 'Precompute exact Hermite coefficients, share global modulation, specialize oscillator dispatch and eliminate bounded ring-index divisions. Add native ARM64 comparisons against shipped 0.3.0 and component timing plus patch-bearing diagnostics. Preserve Preview identity, favorites and full synthesis quality.'
       - uses: actions/setup-java@v5
         with:
@@ -68,6 +72,7 @@ jobs:
         working-directory: android
         run: gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease --stacktrace
       - name: Package only the Preview APK
+        id: package
         run: |
           mkdir -p dist/preview
           cp android/app/build/outputs/apk/release/app-release.apk dist/preview/RiSynth2-0.3.1-preview-arm64.apk
@@ -78,23 +83,25 @@ jobs:
           cp dist/SIGNING-CERT-SHA256.txt dist/preview/
           git rev-parse HEAD > dist/preview/BUILD-COMMIT.txt
           git archive --format=tar.gz --output="${RUNNER_TEMP}/RiSynth2-0.3.1-source.tar.gz" HEAD
-      - name: Publish verified feature commit without overwriting another writer
-        run: |
-          CURRENT="$(git ls-remote origin refs/heads/codex/audio-031 | cut -f1)"
-          test "$CURRENT" = "$GITHUB_SHA"
-          git push origin HEAD:refs/heads/codex/audio-031
       - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.package.outcome == 'success' }}
         with:
           name: RiSynth2-0.3.1-preview-arm64
           path: dist/preview/*
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.package.outcome == 'success' }}
         with:
           name: RiSynth2-0.3.1-source
           path: ${{ runner.temp }}/RiSynth2-0.3.1-source.tar.gz
           if-no-files-found: error
           retention-days: 14
+      - name: Publish verified source without changing workflow configuration
+        run: |
+          CURRENT="$(git ls-remote origin refs/heads/codex/audio-031 | cut -f1)"
+          test "$CURRENT" = "$GITHUB_SHA"
+          git push origin HEAD:refs/heads/codex/audio-031
       - uses: actions/upload-artifact@v4
         if: always()
         with:
