@@ -21,6 +21,10 @@ jobs:
           fetch-depth: 0
       - name: Native ARM64 exact audio and throughput comparison
         run: bash android/test-engine.sh
+      - name: ADPF lifecycle and blocked-service tests with sanitizers
+        run: |
+          clang++ -std=c++20 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -pthread -I. android/tests/hints_test.cpp -o /tmp/hints-test
+          /tmp/hints-test
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -73,26 +77,26 @@ jobs:
         working-directory: android
         run: |
           mkdir -p ../dist/standard ../dist/preview
-          cp app/build/outputs/apk/release/app-release.apk ../dist/standard/RiSynth2-0.3.1-arm64.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/standard/RiSynth2-0.3.2-arm64.apk
           gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
-          cp app/build/outputs/apk/release/app-release.apk ../dist/preview/RiSynth2-0.3.1-preview-arm64.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/preview/RiSynth2-0.3.2-preview-arm64.apk
       - name: Package APK
         run: |
           for apk in dist/*/*.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
             "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$apk"
           done
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/preview/RiSynth2-0.3.1-preview-arm64.apk | grep -E "^(package:|application-label:)"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/preview/RiSynth2-0.3.2-preview-arm64.apk | grep -E "^(package:|application-label:)"
           for dir in dist/standard dist/preview; do (cd "$dir" && sha256sum *.apk > SHA256SUMS.txt); done
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.3.1-preview-arm64
+          name: RiSynth2-0.3.2-preview-arm64
           path: dist/preview/*
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.3.1-standard-arm64
+          name: RiSynth2-0.3.2-standard-arm64
           path: dist/standard/*
           if-no-files-found: error
           retention-days: 30
