@@ -24,6 +24,7 @@
 #include "MeasuredTables.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -74,8 +75,14 @@ public:
         comp = comp_[i] + (comp_[i + 1] - comp_[i]) * t;
     }
 
+    // Same double-precision logarithms previously evaluated in SetDiode.
+    // Prepared off the render thread, shared by voices; never lazy on first note.
+    double LpdlLogW(int index) const { return lpdlLogW_[index]; }
+
 private:
     explicit FilterTables(double sr) : sampleRate_(sr), svfF_(kSize), ladderA_(kSize), comp_(kSize) {
+        for (size_t i = 0; i < lpdlLogW_.size(); ++i)
+            lpdlLogW_[i] = std::log(double(tables::kLpdlW[i]));
         for (int k = 0; k < kSize; ++k) {
             const double knob = std::min(double(k) / kSteps, 127.0);
             const double hz = 16.7 * std::exp2(std::min(knob, 125.0) / 12.624);
@@ -92,6 +99,7 @@ private:
 
     double sampleRate_;
     std::vector<double> svfF_, ladderA_, comp_;
+    std::array<double, 9 * 32> lpdlLogW_{};
 };
 
 class VoiceFilter {
@@ -187,8 +195,13 @@ private:
         const double ct = c - ci; // > 1 above knob 124: extrapolates the last step
         auto at = [&](const float *t, bool logScale) {
             auto row = [&](int r) {
+                if (logScale) { // only kLpdlW uses logarithmic interpolation
+                    const double a = tables_->LpdlLogW(r * 32 + ci);
+                    const double b = tables_->LpdlLogW(r * 32 + ci + 1);
+                    return std::exp(a + (b - a) * ct);
+                }
                 const double a = t[r * 32 + ci], b = t[r * 32 + ci + 1];
-                return logScale ? std::exp(std::log(a) + (std::log(b) - std::log(a)) * ct) : a + (b - a) * std::min(ct, 1.0);
+                return a + (b - a) * std::min(ct, 1.0);
             };
             return row(ri) + (row(ri + 1) - row(ri)) * rt;
         };

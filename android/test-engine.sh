@@ -3,7 +3,7 @@
 # against an edited fixture or claim desktop measurements are tablet results.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE=845d88935c02c698907f793c5058bc7f9222018f
+BASE=8200beadd03549cd08ef9148914901d639c81b27
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 mkdir -p "$BUILD/source" "$BUILD/baseline" "$ROOT/android/app/build/reports"

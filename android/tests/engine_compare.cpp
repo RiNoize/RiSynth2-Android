@@ -82,6 +82,58 @@ void waveEquality() {
     std::printf("Exact wavetable regression: %llu reads, all 128 notes, saw/triangle, wrap edges and random phases OK\n",(unsigned long long)reads);
 }
 
+// Exhaustive resonance coverage and the original 1/8-control update boundary.
+void lpdlEquality() {
+    uint64_t samples=0;
+    for (int sr : {44100,48000,96000}) {
+        auto t=FilterTables::ForSampleRate(sr);
+        for(int i=0;i<288;++i)
+            if(std::bit_cast<uint64_t>(t->LpdlLogW(i)) !=
+               std::bit_cast<uint64_t>(std::log(double(tables::kLpdlW[i])))) std::abort();
+        for(int res=0;res<128;++res) {
+            reference::s2::VoiceFilter a; VoiceFilter b;
+            a.Prepare(sr);b.Prepare(sr);a.Reset();b.Reset();
+            for(int mode=0;mode<4;++mode) for(int i=0;i<1100;++i) {
+                double cutoff = mode==0 ? -3.0+i*0.125 : mode==1 ? 130.0-i*0.125 :
+                    mode==2 ? 64.0+(i%5)*0.03125 : (i*17+res*7)%130;
+                if(mode==2 && i%5==4) cutoff=std::nextafter(cutoff,0.0);
+                const double in=0.25*std::sin(i*0.173)+(i%73==0?0.5:0);
+                a.SetParams(4,cutoff,res);b.SetParams(4,cutoff,res);
+                const double x=a.Process(in),y=b.Process(in);
+                if(!std::isfinite(y) || std::bit_cast<uint64_t>(x)!=std::bit_cast<uint64_t>(y)) {
+                    std::fprintf(stderr,"LPDL DIFFERENCE sr=%d res=%d mode=%d i=%d old=%a new=%a\n",sr,res,mode,i,x,y);std::exit(1);
+                }
+                ++samples;
+            }
+        }
+    }
+    std::printf("Exact LPDL regression: %llu double samples, all 128 resonance values, 3 rates, cutoff edges/sweeps/repeats OK\n",(unsigned long long)samples);
+}
+volatile double lpdlBenchSink=0;
+template<class F> double lpdlBench(bool moving) {
+    F filter;filter.Prepare(48000);filter.Reset();
+    double sum=0;
+    auto begin=std::chrono::steady_clock::now();
+    for(int i=0;i<1000000;++i) {
+        filter.SetParams(4,moving ? 5.0+(i%480)*0.25 : 65.0,96);
+        sum+=filter.Process((i%97-48)*0.003);
+    }
+    lpdlBenchSink=sum;
+    return std::chrono::duration<double>(std::chrono::steady_clock::now()-begin).count();
+}
+void lpdlBenchmark() {
+    for(bool moving : {false,true}) {
+        std::array<double,7>a,b;
+        for(int i=0;i<7;++i) {
+            if(i%2) {b[i]=lpdlBench<VoiceFilter>(moving);a[i]=lpdlBench<reference::s2::VoiceFilter>(moving);}
+            else {a[i]=lpdlBench<reference::s2::VoiceFilter>(moving);b[i]=lpdlBench<VoiceFilter>(moving);}
+        }
+        std::sort(a.begin(),a.end());std::sort(b.begin(),b.end());
+        std::printf("LPDL %-7s (filter only, 7-trial median): baseline %.6f s candidate %.6f s work reduction %+.1f%%\n",
+            moving?"moving":"static",a[3],b[3],100*(1-b[3]/a[3]));
+    }
+}
+
 void equality() {
     uint64_t samples=0; auto cases=scenarios();
     // Every LFO destination/wave combination + automation/voice stealing/releases.
@@ -139,8 +191,9 @@ template<class S> double bench(const Scenario& c,int frames) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now()-t).count();
 }
 int main(int argc,char**) {
-    if(argc==1) {waveEquality();equality();return 0;}
+    if(argc==1) {lpdlEquality();waveEquality();equality();return 0;}
     std::puts("Host benchmark: median of 5 alternating baseline/optimized trials; 48000 Hz, 512 frames; no device/audio driver.");
+    lpdlBenchmark();
     for(const auto& c:scenarios()) {
         std::array<double,5>a,b;
         for(int i=0;i<5;++i) {
