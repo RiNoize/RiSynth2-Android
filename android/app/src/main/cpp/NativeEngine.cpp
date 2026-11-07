@@ -28,7 +28,7 @@ public:
     std::array<std::atomic<int>, kParamCount> parameters{};
     std::atomic<bool> panic{false}, active{false};
     std::atomic<int> error{0}, voices{0};
-    std::atomic<uint64_t> clips{0}, dropped{0};
+    std::atomic<uint64_t> clips{0}, dropped{0}, voiceNanos{0}, effectNanos{0};
     std::atomic<double> renderPercent{0}, peakPercent{0};
     RenderMetrics metrics;
     uint64_t streamGeneration = 0; // serialized control-side state
@@ -90,9 +90,10 @@ public:
         e.drain(true);
         e.synth.BeginBlock(frames);
         uint64_t clipped = 0;
+        RenderTimings timings;
         for (int pos = 0; pos < frames; pos += kChunk) {
             const int n = std::min(kChunk, frames - pos);
-            e.synth.Render(e.left.data(), e.right.data(), n);
+            e.synth.Render(e.left.data(), e.right.data(), n, &timings);
             for (int i = 0; i < n; ++i) {
                 const float l = e.left[i], r = e.right[i];
                 clipped += !std::isfinite(l) || std::abs(l) > 1.0f;
@@ -101,6 +102,8 @@ public:
                 out[2 * (pos + i) + 1] = std::isfinite(r) ? std::clamp(r, -1.0f, 1.0f) : 0.0f;
             }
         }
+        e.voiceNanos.fetch_add(timings.voicesNs, std::memory_order_relaxed);
+        e.effectNanos.fetch_add(timings.effectsNs, std::memory_order_relaxed);
         e.clips.fetch_add(clipped, std::memory_order_relaxed);
         uint64_t state = e.synth.VoiceStates();
         int count = 0;
@@ -131,7 +134,7 @@ public:
         stop();
         error.store(0); clips.store(0); dropped.store(0);
         renderPercent.store(0); peakPercent.store(0);
-        metrics.clear(); stoppedXruns = 0; ++streamGeneration;
+        metrics.clear(); voiceNanos.store(0); effectNanos.store(0); stoppedXruns = 0; ++streamGeneration;
         AAudioStreamBuilder* builder = nullptr;
         aaudio_result_t result = AAudio_createStreamBuilder(&builder);
         if (result != AAUDIO_OK) return AAudio_convertResultToText(result);
@@ -264,7 +267,8 @@ JNIEXPORT jdoubleArray JNICALL Java_com_rinoize_risynth2_NativeEngine_statsNativ
         e.metrics.intervalPeak.exchange(0, std::memory_order_relaxed),
         double(e.metrics.lastFrames.load(std::memory_order_relaxed)),
         e.stream ? double(AAudioStream_getBufferCapacityInFrames(e.stream)) : 0.0,
-        double(e.streamGeneration)
+        double(e.streamGeneration),
+        double(e.voiceNanos.load(std::memory_order_relaxed)), double(e.effectNanos.load(std::memory_order_relaxed))
     };
     constexpr int count = int(sizeof(s) / sizeof(s[0]));
     auto a = env->NewDoubleArray(count); if (a) env->SetDoubleArrayRegion(a, 0, count, s); return a;

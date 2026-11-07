@@ -13,6 +13,7 @@
 #include <array>
 #include <bitset>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 
 namespace oxo::s2 {
@@ -24,6 +25,11 @@ inline constexpr int kMaxVoices = 32;
 // samples early); bend / CC stay exact. Offset in the host block -> the
 // offset to play a note on / off at.
 constexpr int NoteEventOffset(int offset) { return offset & ~15; }
+
+// Optional diagnostic wall times. The caller owns this accumulator on the
+// audio thread and publishes its counters only after rendering. No timers
+// run for ordinary callers (including equivalence / throughput tests).
+struct RenderTimings { uint64_t voicesNs = 0, effectsNs = 0; };
 
 class Synth {
 public:
@@ -408,7 +414,9 @@ public:
     }
     bool PatchChanging() const { return switch_ != Switch::None; }
 
-    void Render(float *left, float *right, int frames) {
+    void Render(float *left, float *right, int frames, RenderTimings *timings = nullptr) {
+        using Clock = std::chrono::steady_clock;
+        auto stageStart = timings ? Clock::now() : Clock::time_point{};
         std::fill(left, left + frames, 0.0f);
         std::fill(right, right + frames, 0.0f);
         // (measured, measure_pitch_mod.py) only the bend's 7-bit MSB counts:
@@ -457,13 +465,19 @@ public:
                     pitchOsc2_[i] = ratio(1, bendCents + all + second);
                 }
             }
+            sharedModulation_.Prepare(lfo, values_, n);
             double cutoffStart = 0;
             const double cutoffStep = CutoffRamp(n, cutoffStart);
             for (Voice &v : voices_)
                 v.Render(left + pos, right + pos, n, blockPos_ + pos, blockEnd_, values_, bendSemis, lfo, cutoffStart, cutoffStep,
-                         pitchModulated ? pitchAll_ : nullptr, pitchModulated ? pitchOsc2_ : nullptr);
+                         pitchModulated ? pitchAll_ : nullptr, pitchModulated ? pitchOsc2_ : nullptr, &sharedModulation_);
             if (switch_ != Switch::None) SwitchFade(left + pos, right + pos, n);
             toArp = ArpAdvance(n);
+        }
+        if (timings) {
+            const auto now = Clock::now();
+            timings->voicesNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(now - stageStart).count());
+            stageStart = now;
         }
         // (measured, measure_fx_order.py) voices -> effect -> EQ -> delay -> chorus
         if (values_[kEffectOn]) effect_.Process(left, right, frames, values_);
@@ -483,6 +497,7 @@ public:
         volume_ = volumeTarget_;
         now_ += uint64_t(std::max(frames, 0));
         blockPos_ += std::max(frames, 0);
+        if (timings) timings->effectsNs += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - stageStart).count());
     }
 
     // A host block of `frames` samples starts (before its first Render): the
@@ -607,7 +622,7 @@ private:
         return pick;
     }
 
-    static constexpr int kLfoBlock = 64;
+    static constexpr int kLfoBlock = SharedModulation::kFrames;
     PatchValues base_{};
     PatchValues values_{};
     int routed_[2] = {-1, -1};
@@ -625,6 +640,7 @@ private:
     Chorus chorus_;
     Equalizer eq_;
     EffectUnit effect_;
+    SharedModulation sharedModulation_;
     double lfoBuf_[2][kLfoBlock] = {};
     double pitchAll_[kLfoBlock] = {}, pitchOsc2_[kLfoBlock] = {};
     double pitchCentsCache_[2] = {-1e30, -1e30}, pitchRatioCache_[2] = {1, 1};

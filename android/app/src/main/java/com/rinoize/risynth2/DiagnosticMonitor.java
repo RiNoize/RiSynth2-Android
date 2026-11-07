@@ -13,11 +13,13 @@ final class DiagnosticMonitor {
     private long previousWall, previousCpu, origin;
     private double cpu, cpuPeak, render, renderPeak, overrunRate, intervalSeconds;
     private long newXruns;
+    private double voiceRender, effectsRender;
     private final ArrayDeque<String> history = new ArrayDeque<>();
     private String compact = "Preparando monitor…", detail = "", context = "";
     void reset(double[] s, long wallMs, long cpuMs) {
         previous = s.clone(); baseline = s.clone(); previousWall = origin = wallMs; previousCpu = cpuMs;
         cpu = cpuPeak = render = renderPeak = overrunRate = intervalSeconds = 0; newXruns = 0;
+        voiceRender = effectsRender = 0;
         history.clear();
     }
     void sample(double[] s, long wallMs, long cpuMs, int requested, String extra) {
@@ -36,6 +38,10 @@ final class DiagnosticMonitor {
             cpuPeak = Math.max(cpuPeak, cpu);
             double frames = s[FRAMES] - previous[FRAMES];
             render = frames > 0 ? Math.max(0, (s[WALL_NS] - previous[WALL_NS]) * s[1] / (frames * 1.0e7)) : 0;
+            if (frames > 0 && s.length > 22 && previous.length > 22) {
+                voiceRender = Math.max(0, s[21] - previous[21]) * s[1] / (frames * 1.0e7);
+                effectsRender = Math.max(0, s[22] - previous[22]) * s[1] / (frames * 1.0e7);
+            } else voiceRender = effectsRender = 0;
             overrunRate = Math.max(0, s[OVERRUNS] - previous[OVERRUNS]) / intervalSeconds;
             newXruns = s[4] < 0 || previous[4] < 0 ? 0 : (long)Math.max(0, s[4] - previous[4]);
         }
@@ -52,9 +58,13 @@ final class DiagnosticMonitor {
             cpu, cpuPeak, render, s[INTERVAL_PEAK], renderPeak, ov, overrunRate, ovPercent, blocks,
             xruns, newXruns, s[7], delta(s,8), delta(s,9), s[0]>0?"ACTIVO":"DETENIDO", s[1], requested, s[3], s[CAPACITY], s[2], s[CALLBACK_FRAMES],
             s[1]>0?s[CALLBACK_FRAMES]*1000/s[1]:0, s[1]>0?s[3]*1000/s[1]:0, s[10], s[12]==12?"LOW LATENCY":"NORMAL", s[11], intervalSeconds, (wallMs-origin)/1000.0, extra);
+        if (s.length > 22) detail += String.format(Locale.US,
+            "\n\nDesglose de Render: Voces/LFO %.1f%% · Efectos/salida %.1f%%\nSon tiempos de pared sobre tiempo de audio, no CPU por componente. El resto incluye MIDI, mezcla de salida y diagnóstico.",
+            voiceRender, effectsRender);
         history.add(String.format(Locale.US,
             "t=%.3fs dt=%.3fs active=%.0f cpu=%.1f%% render=%.1f%% peak=%.1f%% ov=%d ov/s=%.2f xruns=%s dx=%d voices=%.0f clip=%d queue=%d buffer=%.0f cb=%.0f sr=%.0f",
-            (wallMs-origin)/1000.0, intervalSeconds, s[0], cpu, render, s[INTERVAL_PEAK], ov, overrunRate, xruns, newXruns, s[7], delta(s,8), delta(s,9), s[3], s[CALLBACK_FRAMES], s[1]));
+            (wallMs-origin)/1000.0, intervalSeconds, s[0], cpu, render, s[INTERVAL_PEAK], ov, overrunRate, xruns, newXruns, s[7], delta(s,8), delta(s,9), s[3], s[CALLBACK_FRAMES], s[1])
+            + (s.length > 22 ? String.format(Locale.US," voiceRender=%.1f%% fxRender=%.1f%%",voiceRender,effectsRender) : ""));
         while (history.size()>120) history.removeFirst();
         previous=s.clone(); previousWall=wallMs; previousCpu=cpuMs;
     }

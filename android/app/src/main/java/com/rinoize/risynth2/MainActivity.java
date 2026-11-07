@@ -113,13 +113,15 @@ public final class MainActivity extends Activity implements MidiController.Liste
         ScrollView scroll = new ScrollView(this); scroll.addView(details);
         monitorDetail = details;
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Monitor de audio y CPU")
-            .setView(scroll).setPositiveButton("Copiar informe", null).setNeutralButton("Reiniciar", null).setNegativeButton("Cerrar",null).create();
+            .setView(scroll).setPositiveButton("Copiar informe + patch", null).setNeutralButton("Reiniciar", null).setNegativeButton("Cerrar",null).create();
         dialog.setOnDismissListener(d -> { if (monitorDetail == details) monitorDetail = null; });
         dialog.setOnShowListener(d -> {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 ClipboardManager clipboard = (ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
                 if (clipboard != null) clipboard.setPrimaryClip(ClipData.newPlainText("RiSynth2 diagnóstico",
-                    monitor.report("RiSynth2 " + BuildConfig.VERSION_NAME + " · " + Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE)));
+                    monitor.report("RiSynth2 " + BuildConfig.VERSION_NAME + " · " + Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE)
+                    + "\n\nPatch actual al copiar (formato .sy1; contiene tus ajustes):\n"
+                    + (engine == null ? "No disponible" : engine.snapshot())));
                 Toast.makeText(this,"Informe copiado, listo para pegar",Toast.LENGTH_SHORT).show();
             });
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {

@@ -3,7 +3,7 @@
 # against an edited fixture or claim desktop measurements are tablet results.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE=450c699c3c44a526cc5e821c4a53fc6529706690
+BASE=845d88935c02c698907f793c5058bc7f9222018f
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 mkdir -p "$BUILD/source" "$BUILD/baseline" "$ROOT/android/app/build/reports"
@@ -22,8 +22,9 @@ PY
 REPORT="$ROOT/android/app/build/reports/engine-performance.txt"
 {
   echo "Reference commit: $BASE"
-  echo "Candidate commit: $(git -C "$ROOT" rev-parse HEAD)"
+  echo "Candidate commit: $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo local-worktree)"
   uname -sm
+  if command -v lscpu >/dev/null; then lscpu | grep -E "^(Architecture|Model name|CPU op-mode|CPU\(s\))"; fi
   ${CXX:-clang++} --version | head -n 1
   echo 'Identical compiler flags: -std=c++20 -O3 -fno-fast-math'
 } > "$REPORT"

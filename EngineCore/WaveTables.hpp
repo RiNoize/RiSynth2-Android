@@ -45,19 +45,32 @@ inline void InverseRealFft(std::vector<std::complex<double>> &a) {
 struct WaveTable {
     uint32_t size = 0; // power of two
     uint32_t mask = 0;
-    std::vector<float> data; // size + 3 guard samples for cubic reads
+    std::vector<float> data; // Original samples retained for inspection / reference tests.
+    struct Cubic { float x0, c1, c2, c3; };
+    std::vector<Cubic> cubic; // Immutable; shared across every voice and instance.
+
+    // The Hermite coefficients depend on the table samples, not oscillator
+    // phase. Build them once on the preparation thread, with the original
+    // float expressions and operation order. No lower-order interpolation.
+    void PrepareCubic() {
+        cubic.resize(size);
+        for (uint32_t i = 0; i < size; ++i) {
+            const float xm1 = data[(i + size - 1) & mask], x0 = data[i & mask];
+            const float x1 = data[(i + 1) & mask], x2 = data[(i + 2) & mask];
+            const float c1 = 0.5f * (x1 - xm1);
+            const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+            const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+            cubic[i] = {x0, c1, c2, c3};
+        }
+    }
 
     // phase in [0, 1); 4-point Hermite interpolation.
     float Read(double phase) const {
         const double pos = phase * size;
         const uint32_t i = uint32_t(pos);
         const float f = float(pos - i);
-        const float xm1 = data[(i + size - 1) & mask], x0 = data[i & mask];
-        const float x1 = data[(i + 1) & mask], x2 = data[(i + 2) & mask];
-        const float c1 = 0.5f * (x1 - xm1);
-        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
-        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
-        return ((c3 * f + c2) * f + c1) * f + x0;
+        const auto &c = cubic[i & mask];
+        return ((c.c3 * f + c.c2) * f + c.c1) * f + c.x0;
     }
 };
 
@@ -108,6 +121,7 @@ private:
         t.mask = size - 1;
         t.data.resize(size + 3);
         for (uint32_t i = 0; i < size + 3; ++i) t.data[i] = float(spec[i % size].real());
+        t.PrepareCubic();
         return t;
     }
 

@@ -21,6 +21,13 @@ public final class DiagnosticMonitorTest {
         near(m.cpuPercent(),0,"no old-session CPU carryover");
         for(int i=0;i<200;i++) m.sample(s,4100+i*500,1850,512,"bounded");
         if(m.report("test").split("active=").length>121) throw new AssertionError("unbounded log");
+        s=new double[23]; s[0]=1; s[1]=48000; s[20]=3;
+        m.sample(s,200000,20000,1024,"stages");
+        s[15]=24000; s[14]=250000000; s[21]=200000000; s[22]=25000000;
+        m.sample(s,200500,20250,1024,"stages");
+        if(!m.detail().contains("Voces/LFO 40.0% · Efectos/salida 5.0%")) throw new AssertionError("stage timing denominator");
+        m.reset(s,200500,20250); m.sample(s,201000,20250,1024,"stopped");
+        if(!m.detail().contains("Voces/LFO 0.0%")) throw new AssertionError("stale stage counters");
         System.out.println("Diagnostic monitor: CPU scales, render, irregular sampling, resets, unsupported xruns and bounded log OK");
     }
 }

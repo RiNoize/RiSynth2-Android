@@ -124,7 +124,7 @@ public:
             }
             buf_[0][pos_] = float(wl);
             buf_[1][pos_] = float(wr);
-            pos_ = (pos_ + 1) % size;
+            if (++pos_ == size) pos_ = 0; // bounded index: no integer division
             if (written_ < size) ++written_;
             l[i] = float(dry * dryL + wet * out * el);
             r[i] = float(dry * dryR + wet * out * er);
@@ -144,13 +144,18 @@ private:
     }
     float At(int ch, size_t i) const {
         const size_t size = buf_[ch].size();
-        return written_ >= size || (pos_ + size - 1 - i) % size < written_ ? buf_[ch][i] : 0.0f;
+        size_t age = pos_ + size - 1 - i; // in [0, 2*size-2]
+        if (age >= size) age -= size;
+        return written_ >= size || age < written_ ? buf_[ch][i] : 0.0f;
     }
     double Read(int ch, double delay) const {
         const size_t size = buf_[ch].size();
         double rp = double(pos_) - delay;
         while (rp < 0) rp += double(size);
-        const size_t i0 = size_t(rp) % size, i1 = (i0 + 1) % size;
+        // delay is bounded by size-3/4; addition above can round to size.
+        size_t i0 = size_t(rp);
+        if (i0 >= size) i0 -= size;
+        const size_t i1 = i0 + 1 == size ? 0 : i0 + 1;
         const double f = rp - std::floor(rp);
         return At(ch, i0) * (1 - f) + At(ch, i1) * f;
     }
@@ -237,7 +242,7 @@ public:
                 wetL = fbL_ = tap(0, 0.0);
                 wetR = fbR_ = tap(1, thetaR);
             }
-            pos_ = (pos_ + 1) % size;
+            if (++pos_ == size) pos_ = 0; // bounded index: no integer division
             lfoPhase_ += inc;
             lfoPhase_ -= std::floor(lfoPhase_);
             l[i] = float(l[i] + level * wetL);
@@ -258,7 +263,10 @@ private:
         const size_t size = b.size();
         double rp = double(pos_) - delay;
         while (rp < 0) rp += double(size);
-        const size_t i0 = size_t(rp) % size, i1 = (i0 + 1) % size;
+        // delay is bounded by size-3/4; addition above can round to size.
+        size_t i0 = size_t(rp);
+        if (i0 >= size) i0 -= size;
+        const size_t i1 = i0 + 1 == size ? 0 : i0 + 1;
         const double f = rp - std::floor(rp);
         return b[i0] * (1 - f) + b[i1] * f;
     }

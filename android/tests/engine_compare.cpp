@@ -13,7 +13,7 @@
 #include <stdexcept>
 #include <vector>
 using namespace oxo::s2;
-struct Scenario { const char* name; PatchValues patch; int notes; };
+struct Scenario { const char* name; PatchValues patch; int notes; int baseNote = 36; };
 std::vector<Scenario> scenarios() {
     std::vector<Scenario> out;
     auto base = kInitPatchValues;
@@ -35,12 +35,53 @@ std::vector<Scenario> scenarios() {
     fm[kLfo1Depth]=64; fm[kLfo2Depth]=40; fm[kOsc1FM]=65; fm[kOsc2Sync]=1;
     fm[kModEnvOn]=1; fm[kModEnvDest]=0; fm[kModEnvAmount]=90;
     out.push_back({"Dual-pitch-FM-32",fm,32});
+    auto pan = pad; pan[kLfo1Dest]=7; pan[kLfo2On]=1; pan[kLfo2Dest]=7;
+    pan[kLfo2Depth]=90; pan[kLfo2Type]=4;
+    out.push_back({"Stereo-LFO-15",pan,5});
+    out.push_back({"Stereo-LFO-32",pan,12});
+    auto pulse=detune; pulse[kOsc1Shape]=2; pulse[kOsc2Shape]=2;
+    pulse[kLfo1Dest]=5; pulse[kLfo2On]=1; pulse[kLfo2Dest]=4; pulse[kLfo2Depth]=83;
+    out.push_back({"Pulse-detune-32",pulse,12});
+    auto saw=detune; saw[kOsc1Shape]=1; saw[kOsc2Shape]=1;
+    out.push_back({"Saw-detune-32",saw,12});
+    auto sine=detune; sine[kOsc1Shape]=0; sine[kSubShape]=0;
+    out.push_back({"Sine-detune-15",sine,5});
+    auto diode=detune; diode[kFilterType]=4; diode[kFilterRes]=110;
+    out.push_back({"LPDL-unison-32",diode,12});
+    auto plain=base; plain[kLfo1On]=plain[kLfo2On]=0;
+    plain[kFilterRes]=100; plain[kOsc1Shape]=2; plain[kOsc2Shape]=2;
+    out.push_back({"Single-voice",plain,1});
+    out.push_back({"Bass-table-15",plain,15,0});
+    out.push_back({"High-table-15",plain,15,108});
     return out;
 }
 template<class S> void start(S& s,const Scenario& c,int sr) {
     s.SetSampleRate(sr); s.SetPatch(c.patch); s.SetTransport(123,0,true);
-    for(int k=0;k<c.notes;++k) s.NoteOn(36+k,80+k%40);
+    for(int k=0;k<c.notes;++k) s.NoteOn(c.baseNote+k,80+k%40);
 }
+void waveEquality() {
+    uint64_t reads=0;
+    for (int sr : {44100,48000}) {
+        auto old=reference::s2::WaveTableSet::ForSampleRate(sr);
+        auto now=WaveTableSet::ForSampleRate(sr);
+        std::minstd_rand rng(771);
+        for(int note=0;note<128;++note) for(int shape=0;shape<2;++shape) {
+            const auto& a=shape?old->Triangle(note):old->Saw(note);
+            const auto& b=shape?now->Triangle(note):now->Saw(note);
+            for(int n=0;n<4096;++n) {
+                const double phase=n==0?0:n==1?std::nextafter(1.0,0.0):double(rng())/2147483647.0;
+                const float x=a.Read(phase),y=b.Read(phase);
+                if(std::bit_cast<uint32_t>(x)!=std::bit_cast<uint32_t>(y)) {
+                    std::fprintf(stderr,"WAVETABLE DIFFERENCE sr=%d note=%d shape=%d phase=%a old=%a new=%a\n",sr,note,shape,phase,x,y);
+                    std::exit(1);
+                }
+                ++reads;
+            }
+        }
+    }
+    std::printf("Exact wavetable regression: %llu reads, all 128 notes, saw/triangle, wrap edges and random phases OK\n",(unsigned long long)reads);
+}
+
 void equality() {
     uint64_t samples=0; auto cases=scenarios();
     // Every LFO destination/wave combination + automation/voice stealing/releases.
@@ -67,7 +108,7 @@ void equality() {
         for(int block=0;block<180;++block) {
             int n=std::array<int,7>{1,16,63,64,256,512,2048}[block%7];
             if(block==18) {old.ControlChange(64,127);now.ControlChange(64,127);}
-            if(block==20) for(int k=0;k<c.notes;++k) {old.NoteOff(36+k);now.NoteOff(36+k);}
+            if(block==20) for(int k=0;k<c.notes;++k) {old.NoteOff(c.baseNote+k);now.NoteOff(c.baseNote+k);}
             if(block==30) {old.PitchBend(11000);now.PitchBend(11000);}
             if(block==35) {old.NoteOn(72,119);now.NoteOn(72,119);}
             if(block==40) {old.ControlChange(64,0);now.ControlChange(64,0);}
@@ -75,7 +116,9 @@ void equality() {
             if(block==70) {old.Reset();now.Reset();old.NoteOn(60,99);now.NoteOn(60,99);}
             if(block>=72) {int id=(block-72)%kParamCount;int v=kParams[id].min+int(rng()%unsigned(kParams[id].max-kParams[id].min+1));old.SetParam(id,v);now.SetParam(id,v);}
             if(block==160) {old.SetSampleRate(sr==44100?48000:44100);now.SetSampleRate(sr==44100?48000:44100);}
-            old.BeginBlock(n);now.BeginBlock(n);old.Render(a.data(),b.data(),n);now.Render(x.data(),y.data(),n);
+            old.BeginBlock(n);now.BeginBlock(n);old.Render(a.data(),b.data(),n);
+            RenderTimings timing;
+            now.Render(x.data(),y.data(),n,block%2 ? &timing : nullptr);
             for(int i=0;i<n;++i) {
                 if(!std::isfinite(x[i])||!std::isfinite(y[i])||std::bit_cast<uint32_t>(a[i])!=std::bit_cast<uint32_t>(x[i])||std::bit_cast<uint32_t>(b[i])!=std::bit_cast<uint32_t>(y[i])) {
                     std::fprintf(stderr,"DIFFERENCE %s sr=%d block=%d sample=%d old=%a/%a new=%a/%a\n",c.name,sr,block,i,a[i],b[i],x[i],y[i]);std::exit(1);
@@ -96,7 +139,7 @@ template<class S> double bench(const Scenario& c,int frames) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now()-t).count();
 }
 int main(int argc,char**) {
-    if(argc==1) {equality();return 0;}
+    if(argc==1) {waveEquality();equality();return 0;}
     std::puts("Host benchmark: median of 5 alternating baseline/optimized trials; 48000 Hz, 512 frames; no device/audio driver.");
     for(const auto& c:scenarios()) {
         std::array<double,5>a,b;

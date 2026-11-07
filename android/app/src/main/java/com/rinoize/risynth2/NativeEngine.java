@@ -34,7 +34,7 @@ final class NativeEngine implements AutoCloseable {
     synchronized String save(String name) { return handle == 0 ? "" : saveNative(handle, name); }
     synchronized int[] values() { return handle == 0 ? new int[99] : valuesNative(handle); }
     synchronized double[] stats() {
-        if (handle == 0) return new double[21];
+        if (handle == 0) return new double[23];
         double[] result = statsNative(handle);
         if (result[0] == 0) streaming = false;
         return result;

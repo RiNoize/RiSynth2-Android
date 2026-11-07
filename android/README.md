@@ -1,10 +1,10 @@
-# RiSynth2 Android 0.3.0
+# RiSynth2 Android 0.3.1
 
 Independent Android adaptation of the Oxo Synth2 C++ engine, compatible with Synth1 `.sy1` patches. Not an official Oxo Music or Daichi Laboratory application. Original engine and MIT notices are retained. No original Synth1 binaries, artwork, ROMs or third-party preset banks are bundled.
 
 ## Install / update
 
-GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.3.0-arm64**. Two APKs are included. **For users of 0.1.0, install `RiSynth2-0.3.0-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
+GitHub **Actions → Build Android APK → latest successful run → Artifacts → RiSynth2-0.3.1-preview-arm64**. Preview and standard builds are separate artifacts, each containing one APK. Install Preview 0.3.1 over Preview 0.2.0 or 0.3.0 without uninstalling or reimporting. **For users of 0.1.0, install `RiSynth2-0.3.1-preview-arm64.apk`.** It appears as **RiSynth2 Preview** and uses `com.rinoize.risynth2.preview`, leaving the original application and its data untouched. Import your bank folders into Preview; private libraries/settings are not automatically shared. Keep 0.1.0 installed until important edited sounds have been exported.
 
 The 0.1.0 workflow attempted to cache a signing-key path that did not exist, so its signing key was not preserved. The normal 0.2.0 APK (`com.rinoize.risynth2`) therefore cannot update that earlier installation in place. Do not uninstall 0.1.0 merely to try it. Preview is the non-destructive alternative and its future updates must retain the Preview package ID.
 
@@ -12,13 +12,13 @@ CI now explicitly provisions/uses `~/.android/risynth2-ci/debug.keystore`, cache
 
 Target: Samsung Galaxy Tab A9 SM-X110, ARM64, Android 13+. The user reported glitches at 512 frames and better results at 1024 in 0.1.0. This release adds measurements, not a claim that those glitches have been fixed. New installations request 1024 frames; an existing explicitly saved setting is kept. Choose **Audio → 1024 frames** for the first comparison. Actual buffer size can differ from the request.
 
-## New in 0.3.0
+## New in 0.3.1
 
 **☆ Guardar favorito** saves an independent .sy1 copy with the current parameter edits. Repeated presses do not duplicate an identical snapshot; changed settings create a new copy even with the same name. **★ Favoritos** opens the collection, also pinned after INIT in the bank list. Collections larger than 128 sounds are paged automatically. Saving leaves the source and current program untouched. Favorites are private app data; export important patches before uninstalling/clearing storage.
 
 The engine now reuses exact calculations for envelopes, tuning and static filters, and shares global pitch-LFO work between voices. No lower-quality mode or reduced polyphony is used. Automated tests compare output sample by sample against 0.2.0. Performance is patch-dependent and needs tablet verification: see [OPTIMIZATION.md](OPTIMIZATION.md). Increasing the buffer alone does not reduce the synthesis work per second.
 
-Install the **Preview 0.3.0** APK over **Preview 0.2.0** without uninstalling: package ID and pinned signing certificate are retained. It remains separate from the old 0.1.0 application.
+Install the **Preview 0.3.1** APK over **Preview 0.2.0** without uninstalling: package ID and pinned signing certificate are retained. It remains separate from the old 0.1.0 application.
 
 ## Always-visible audio / CPU monitor
 
@@ -69,3 +69,8 @@ gradle -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
 ```
 
 No Apple/VST SDK submodules are needed. CI provisions the pinned Gradle version and archives the exact tracked sources with each build. No Gradle wrapper binary is included. APK: `android/app/build/outputs/apk/release/app-release.apk`.
+
+
+## 0.3.1 per-sample optimization
+
+See `OPTIMIZATION031.md`. This is an additional exact optimization relative to shipped 0.3.0, not reuse of its comparison against 0.2.0. Both native ARM64 and x86_64 tests must pass before publishing. No claim of Tab A9 performance until measured there. The monitor details now separate voices/LFO from effects/output wall time. **Copiar informe + patch** includes the current .sy1 snapshot so a difficult sound can be reproduced; it only copies to your clipboard, never uploads anything. Preview/standard APKs have the same DSP and differ in Android package identity. CI packages them in separate downloads.

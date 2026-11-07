@@ -12,6 +12,7 @@
 #include "MeasuredTables.hpp"
 #include "Params.hpp"
 #include "WaveTables.hpp"
+#include "SharedModulation.hpp"
 
 #include <array>
 #include <cmath>
@@ -155,7 +156,8 @@ public:
     // block's length.
     void Render(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
                 double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep,
-                const double *pitchAll = nullptr, const double *pitchOsc2 = nullptr) {
+                const double *pitchAll = nullptr, const double *pitchOsc2 = nullptr,
+                const SharedModulation *shared = nullptr) {
         if (!Active()) return;
         if (p[kPortaTime] <= 0) glide_ = note_;
         // (measured, measure_porta.py) a glide moves every 16 samples
@@ -164,7 +166,7 @@ public:
             const int n = gliding ? std::min(frames - off, glideTick_) : frames - off;
             const double *at[2] = {lfo[0] ? lfo[0] + off : nullptr, lfo[1] ? lfo[1] + off : nullptr};
             RenderChunk(left + off, right + off, n, pos + off, blockEnd, p, bendSemis, at, cutoffKnob + cutoffStep * off, cutoffStep,
-                        pitchAll ? pitchAll + off : nullptr, pitchOsc2 ? pitchOsc2 + off : nullptr);
+                        pitchAll ? pitchAll + off : nullptr, pitchOsc2 ? pitchOsc2 + off : nullptr, shared, off);
             off += n;
             if (gliding && (glideTick_ -= n) == 0) {
                 glideTick_ = 16;
@@ -179,7 +181,21 @@ public:
 private:
     void RenderChunk(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
                      double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep,
-                     const double *pitchAll, const double *pitchOsc2) {
+                     const double *pitchAll, const double *pitchOsc2, const SharedModulation *shared, int sharedOffset) {
+        // Select the oscillator kernel outside the per-sample/detune loops.
+        // All four use the original expressions and full Hermite interpolation.
+        switch (p[kOsc1Shape]) {
+        case 0: RenderChunkTyped<0>(left, right, frames, pos, blockEnd, p, bendSemis, lfo, cutoffKnob, cutoffStep, pitchAll, pitchOsc2, shared, sharedOffset); break;
+        case 1: RenderChunkTyped<1>(left, right, frames, pos, blockEnd, p, bendSemis, lfo, cutoffKnob, cutoffStep, pitchAll, pitchOsc2, shared, sharedOffset); break;
+        case 2: RenderChunkTyped<2>(left, right, frames, pos, blockEnd, p, bendSemis, lfo, cutoffKnob, cutoffStep, pitchAll, pitchOsc2, shared, sharedOffset); break;
+        default: RenderChunkTyped<3>(left, right, frames, pos, blockEnd, p, bendSemis, lfo, cutoffKnob, cutoffStep, pitchAll, pitchOsc2, shared, sharedOffset); break;
+        }
+    }
+
+    template <int Shape1>
+    void RenderChunkTyped(float *left, float *right, int frames, int64_t pos, int64_t blockEnd, const PatchValues &p,
+                     double bendSemis, const double *const lfo[2], double cutoffKnob, double cutoffStep,
+                     const double *pitchAll, const double *pitchOsc2, const SharedModulation *shared, int sharedOffset) {
         // ---- LFO routing (measured depth laws per destination). Both LFOs on
         // one destination (measured, measure_lfo_sum.py): pitch = sum of each
         // LFO's cents; cutoff / FM / pw / pan = the law applied to the
@@ -228,7 +244,8 @@ private:
         const double mix2 = p[kOscMix] / 127.0, mix1 = 1.0 - mix2; // (measured) linear crossfade
         const double fmBeta = p[kOsc2Ring] ? 0.0 : tables::kFmBeta[p[kOsc1FM]];
         const bool ring = p[kOsc2Ring] != 0, sync = p[kOsc2Sync] != 0;
-        const int shape1 = p[kOsc1Shape], shape2 = p[kOsc2Shape];
+        constexpr int shape1 = Shape1;
+        const int shape2 = p[kOsc2Shape];
         const double subGainKnob = p[kSubGain];
         const double subW = subGainKnob / (subGainKnob + 32.0), mainW = 1.0 - subW; // (measured) auto level
         const bool subOn = p[kSubGain] > 0;
@@ -326,7 +343,7 @@ private:
             const double incA = inc1 * mAll, incB = inc2 * m2 * mEnv2;
             double w = width;
             if (r[5]) {
-                const double l = r[5].Signed(i);
+                const double l = shared ? shared->width[sharedOffset + i] : r[5].Signed(i);
                 w += l * (l > 0 ? 1.0 - width : width);
             }
             if (modOn && modDest == 2) {
@@ -343,7 +360,7 @@ private:
                 // LFO unipolar toward 127 by depth / 127 * u; mod env
                 // bipolar room-left, m = (amt - 64) / 64 at env 1.
                 double knob = p[kOsc1FM];
-                if (r[6]) knob += (127.0 - knob) * r[6].Unipolar(i);
+                if (r[6]) knob += (127.0 - knob) * (shared ? shared->fm[sharedOffset + i] : r[6].Unipolar(i));
                 if (modOn && modDest == 1) {
                     // the DECAY reaches FM in dB: 0 dB -> 1, -80 dB -> 0 (the
                     // offset falls LINEARLY in time, to 0 at 9.2 taus); the
@@ -377,7 +394,10 @@ private:
             // (measured, measure_fm_key.py) the deviation is a FIXED phase step
             // per sample (beta x key 60 at 44.1 kHz): the index falls an octave
             // up, rises with the sample rate
-            const double fm = 1.0 + fmB * o2 * (kFmRefInc / incA);
+            // With zero FM depth this expression is exactly 1.0 (incA is
+            // strictly positive for every legal note/transpose). Avoid a
+            // double-precision division on every oscillator sample.
+            const double fm = fmB == 0.0 ? 1.0 : 1.0 + fmB * o2 * (kFmRefInc / incA);
             double o1 = shape1At(osc1Phase_);
             double sub = subOn ? subAt(subPhase_) : 0.0;
             if (detuneOn) {
@@ -420,16 +440,23 @@ private:
             // ---- filter -> saturation -> amp (measured order) ----
             const double base = cutoffBase + cutoffStep * i, low = base - 2.1;
             double cutoff = low + (std::clamp(base + envDepth, -2.0, 125.0) - low) * filterEnv_.Next();
-            if (r[3]) cutoff += std::max(0.0, 125.0 - cutoff) * std::min(1.0, r[3].Unipolar(i)); // tops out (measured)
+            if (r[3]) cutoff += std::max(0.0, 125.0 - cutoff) * (shared ? shared->cutoff[sharedOffset + i] : std::min(1.0, r[3].Unipolar(i))); // tops out (measured)
             filter_.SetParams(filterType, cutoff, filterRes);
             const double filtered = Saturate(filter_.Process(mixed), satA);
             const double env = amp_.Next();
             double gainMod = 1.0;
-            for (int k = 0; k < r[4].n; ++k) gainMod *= 1.0 - r[4].depth[k] / 127.0 * 0.5 * (1.0 - r[4].v[k][i]);
+            if (shared) {
+                if (shared->hasAmplitude) gainMod = shared->amplitude[sharedOffset + i];
+            } else {
+                for (int k = 0; k < r[4].n; ++k) gainMod *= 1.0 - r[4].depth[k] / 127.0 * 0.5 * (1.0 - r[4].v[k][i]);
+            }
             const double x = filtered * env * ampGain * gainMod;
             const double y = x; // (the original's 22 kHz output lowpass = the EQ tone stage)
             double gl = panL, gr = panR;
-            if (r[7]) {
+            if (shared && shared->hasPan) {
+                gl *= shared->panL[sharedOffset + i];
+                gr *= shared->panR[sharedOffset + i];
+            } else if (!shared && r[7]) {
                 const double s = r[7].Signed(i); // + = left; unclamped (measured: 127 + 127 -> gains 2 / -1)
                 const double q = s >= 0 ? 1.0 - std::pow(1.0 - s, 3.0) : std::pow(1.0 + s, 3.0) - 1.0;
                 gl *= q >= 0 ? 1.0 + 0.5 * q : 1.0 + q;
@@ -444,22 +471,6 @@ private:
             tail_ = !amp_.Active();
         }
     }
-
-    // The LFOs (0..2) routed to one destination.
-    struct LfoRoute {
-        const double *v[2] = {nullptr, nullptr};
-        int depth[2] = {0, 0};
-        int n = 0;
-        explicit operator bool() const { return n > 0; }
-        // sum of depth / 127 * f(lfo value)
-        template <typename F> double Sum(int i, F f) const {
-            double s = 0;
-            for (int k = 0; k < n; ++k) s += depth[k] / 127.0 * f(v[k][i]);
-            return s;
-        }
-        double Signed(int i) const { return Sum(i, [](double x) { return x; }); }
-        double Unipolar(int i) const { return Sum(i, [](double x) { return 0.5 * (x + 1.0); }); }
-    };
 
     static double Wrap(double ph) { return ph - std::floor(ph); }
     // (measured, measure_porta.py) a glide aims 1.35 % of its starting
