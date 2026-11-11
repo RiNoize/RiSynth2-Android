@@ -2,7 +2,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [master, codex/risynth2-cpu-affinity-033]
+    branches: [master]
     paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
   pull_request:
     paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
