@@ -19,3 +19,5 @@ The Audio dialog persists **Automático** (default) or **Núcleos de rendimiento
 On the Tab A9 compare exactly the same patch and notes with 2048 requested frames. Run Automático and Rendimiento in the same APK and same audio route/ADPF setting, measure **actual callback frames**, sample rate, Render average and peaks, OV, XRun increments and thermal status. Repeat in reverse order, then try smaller buffers. No performance gain is promised without device tests.
 
 RiMU2000's earlier measured Render improvement (127.8%→54.3%) also involved a separate resampler change, so it cannot be attributed entirely to affinity; nor does affinity reduce the number of synth DSP operations.
+
+The original RiMU2000 BSD-3-Clause copyright, conditions and disclaimer are shipped as an APK asset (`assets/licenses/RiMU2000-BSD-3-Clause.txt`) and retained under `android/licenses/` in the source tree.

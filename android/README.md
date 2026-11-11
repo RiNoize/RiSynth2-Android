@@ -14,7 +14,7 @@ Target: Samsung Galaxy Tab A9 SM-X110, ARM64, Android 13+. The user reported gli
 
 ## New in 0.3.3: CPU placement on the DSP callback
 
-**Audio → CPU del hilo de síntesis → Automático / Núcleos de rendimiento.** Automático is the default; switching modes reopens the audio stream while preserving patches, banks and favorites. The same BSD-3-Clause helper as RiMU2000 selects the highest-capacity CPUs **within the callback thread's original allowed affinity** using `cpu_capacity`, or max-frequency only when the capacity data is incomplete. It never assumes CPUs 6/7, forces MHz, changes priority or runs two DSP threads. Errors or missing metadata safely leave the original affinity.
+**Audio → CPU del hilo de síntesis → Automático / Núcleos de rendimiento.** Automático is the default; switching modes reopens the audio stream while preserving patches, banks and favorites. The same BSD-3-Clause helper as RiMU2000 (original copyright and license in APK assets: `assets/licenses/RiMU2000-BSD-3-Clause.txt`) selects the highest-capacity CPUs **within the callback thread's original allowed affinity** using `cpu_capacity`, or max-frequency only when the capacity data is incomplete. It never assumes CPUs 6/7, forces MHz, changes priority or runs two DSP threads. Errors or missing metadata safely leave the original affinity.
 
 The monitor and copied report now contain CPU mode, owner TID, allowed/requested/effective masks, CPU sampled in the callback, all observed CPUs, criterion and errno. An accepted mask proves placement, not lower computational complexity or fewer XRuns. ADPF remains separate. See [CPU_PLACEMENT_033.md](CPU_PLACEMENT_033.md).
 
