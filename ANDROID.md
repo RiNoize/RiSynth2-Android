@@ -36,3 +36,8 @@ Además se precalculan los mismos logaritmos del LPDL, con doble precisión y va
 ## CPU placement (0.3.3)
 
 Audio adds a saved Automático / Núcleos de rendimiento selector for the actual single AAudio DSP callback, using RiMU2000's capacity-first policy without fixed CPU numbers. It reports initial/requested/effective CPU masks, TID, observed CPUs and errors. The mode is independent of ADPF and does not parallelize synth voices. See android/CPU_PLACEMENT_033.md.
+
+
+## Preview 0.3.4 — Hardware ámbar
+
+Landscape tablets get the new performance UI, amber patch display, 8 quick slots, tactile knobs, pitch/mod strips and a keyboard. Portrait phones/tablets retain the classic UI. Favorites now track the exact current patch snapshot, and Pitch Bend recenters on rotation; see [android/LIVE_UI.md](android/LIVE_UI.md).

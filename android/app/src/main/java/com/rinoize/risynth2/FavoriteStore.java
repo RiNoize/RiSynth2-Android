@@ -13,6 +13,9 @@ import java.util.*;
 final class FavoriteStore {
     private static final String PREFIX = ":favorites:";
     private final File root;
+    // Updated on the control worker; read from the UI after applying a patch.
+    // File names embed the canonical .sy1 hash, so building the index needs no patch reads.
+    private volatile Set<String> savedHashes = Collections.emptySet();
     static final class Saved {
         final String bankKey;
         final int slot;
@@ -34,6 +37,9 @@ final class FavoriteStore {
     List<PatchStore.Bank> scan() throws IOException {
         List<PatchStore.Bank> banks = new ArrayList<>();
         List<File> entries = entries();
+        HashSet<String> hashes = new HashSet<>();
+        for (File entry : entries) hashes.add(entry.getName().substring(9));
+        savedHashes = Collections.unmodifiableSet(hashes);
         for (int start = 0; start < entries.size(); start += 128) {
             PatchStore.Patch[] slots = new PatchStore.Patch[128];
             for (int i = start; i < Math.min(start + 128, entries.size()); ++i) {
@@ -47,20 +53,41 @@ final class FavoriteStore {
         }
         return banks;
     }
+    private static String fingerprint(byte[] canonicalPatch) throws IOException {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(canonicalPatch);
+            StringBuilder hex = new StringBuilder(64);
+            for (byte b : digest) hex.append(String.format(Locale.ROOT, "%02x", b & 255));
+            return hex.toString();
+        } catch (NoSuchAlgorithmException ex) { throw new IOException("SHA-256 no disponible", ex); }
+    }
+
+    /** Identifies the exact sound (including edits), regardless of which bank is selected.
+     * Uses the index from scan(), and does not read the filesystem. */
+    boolean hasSnapshot(String snapshot) {
+        try {
+            byte[] bytes = snapshot.getBytes(StandardCharsets.UTF_8);
+            if (bytes.length > PatchStore.MAX_PATCH) return false;
+            String validated = PatchStore.validate(bytes);
+            return savedHashes.contains(fingerprint(validated.getBytes(StandardCharsets.UTF_8)));
+        } catch (IOException ex) { return false; }
+    }
+
     synchronized Saved save(String snapshot) throws IOException {
         byte[] data = snapshot.getBytes(StandardCharsets.UTF_8);
         if (data.length > PatchStore.MAX_PATCH) throw new IOException("Patch demasiado grande");
         String text = PatchStore.validate(data);
         data = text.getBytes(StandardCharsets.UTF_8);
-        String hash;
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(data);
-            StringBuilder hex = new StringBuilder();
-            for (byte b : digest) hex.append(String.format(Locale.ROOT,"%02x",b & 255));
-            hash = hex.toString();
-        } catch (NoSuchAlgorithmException ex) { throw new IOException("SHA-256 no disponible",ex); }
+        String hash = fingerprint(data);
         List<File> saved = entries();
-        for (int i=0; i<saved.size(); ++i) if (saved.get(i).getName().endsWith("-"+hash)) return new Saved(i,true);
+        for (int i=0; i<saved.size(); ++i) if (saved.get(i).getName().endsWith("-"+hash)) {
+            if (!savedHashes.contains(hash)) {
+                HashSet<String> next = new HashSet<>(savedHashes);
+                next.add(hash);
+                savedHashes = Collections.unmodifiableSet(next);
+            }
+            return new Saved(i,true);
+        }
         if (saved.size() >= 131072) throw new IOException("Favoritos alcanzó su límite de 131072 sonidos");
         if (!root.isDirectory() && !root.mkdirs()) throw new IOException("No se pudo crear Favoritos");
         int sequence = saved.isEmpty() ? 1 : Integer.parseInt(saved.get(saved.size()-1).getName().substring(0,8)) + 1;
@@ -77,6 +104,9 @@ final class FavoriteStore {
             File destination = new File(root,String.format(Locale.ROOT,"%08d-%s",sequence,hash));
             if (destination.exists() || !staging.renameTo(destination)) throw new IOException("No se pudo guardar el favorito");
             committed = true;
+            HashSet<String> next = new HashSet<>(savedHashes);
+            next.add(hash);
+            savedHashes = Collections.unmodifiableSet(next);
             return new Saved(saved.size(),false);
         } finally {
             if (!committed) {

@@ -29,7 +29,7 @@ final class DiagnosticMonitor {
     private long newXruns;
     private double voiceRender, effectsRender;
     private final ArrayDeque<String> history = new ArrayDeque<>();
-    private String compact = "Preparando monitor…", detail = "", context = "";
+    private String compact = "Preparando monitor…", brief = "Preparando monitor…", detail = "", context = "";
     void reset(double[] s, long wallMs, long cpuMs) {
         previous = s.clone(); baseline = s.clone(); previousWall = origin = wallMs; previousCpu = cpuMs;
         cpu = cpuPeak = render = renderPeak = overrunRate = intervalSeconds = 0; newXruns = 0;
@@ -67,6 +67,9 @@ final class DiagnosticMonitor {
             "CPU app %.1f%% · Render %.1f%% · pico %.1f%% · voces %.0f\nOV %d · %.1f/s · XRuns %s (+%d) · clip %d\n%s · %.0f Hz · buffer %.0f fr (pedido %d) · tocar para detalles",
             cpu, render, renderPeak, s[7], ov, overrunRate, xruns, newXruns, delta(s,8), s[0]>0?"ACTIVO":"DETENIDO", s[1], s[3], requested);
         if (s.length > HINT_LAG) compact += " · ADPF " + hintState(s);
+        // One short line for the live-performance header; the same counters as compact().
+        brief = String.format(Locale.US, "%s · %.0f fr · CPU %.0f%% · Render %.0f%% · OV %d · XRuns %s",
+            s[0]>0?"ACTIVO":"DETENIDO", s[3], cpu, render, ov, xruns);
         context = extra;
         detail = String.format(Locale.US,
             "CPU app: %.1f%% · pico %.1f%%\nRender medio: %.1f%% · pico intervalo %.1f%% · máximo %.1f%%\nOverruns (OV): %d · %.2f/s · %.2f%% de %d callbacks\nXRuns / underruns AAudio: %s · nuevos +%d\nVoces activas: %.0f · muestras recortadas: %d · cola MIDI perdida: %d\n\nAudio %s · %.0f Hz\nBuffer solicitado: %d fr · real: %.0f fr · capacidad: %.0f fr\nBurst: %.0f fr · último callback: %.0f fr (presupuesto %.2f ms)\nBuffer / frecuencia: %.2f ms (NO es latencia tecla–audio)\nSalida ID %.0f · %s · error %.0f\nVentana real: %.3f s · desde reinicio del monitor: %.1f s\n\n%s\n\nCPU app: 100%% = un núcleo; puede superar 100%%.\nRender: tiempo de pared del callback / tiempo de audio producido.\nOV: callback tardó más que su presupuesto; no equivale a un corte.\nXRuns: contador del controlador de audio; puede no reflejar todos los cortes audibles.\nCambiar/reiniciar audio abre una nueva sesión. No mide latencia real.",
@@ -90,6 +93,7 @@ final class DiagnosticMonitor {
     }
     private long delta(double[] s,int index) { return (long)Math.max(0,s[index]-baseline[index]); }
     String compact() { return compact; }
+    String brief() { return brief; }
     String detail() { return detail; }
     String report(String device) {
         return device + "\n" + detail + "\n\nÚltimas 120 muestras (intervalos reales):\n" + String.join("\n",history);

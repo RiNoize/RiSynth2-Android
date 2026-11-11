@@ -18,8 +18,12 @@ public final class FavoriteStoreTest {
                 check(!saved.alreadySaved && saved.slot==i%128,"pagination/slots");
             }
             check(store.favorites.save(patch(2)).alreadySaved,"identical repeated press must not duplicate");
+            check(store.favorites.hasSnapshot(patch(2)), "exact saved sound identified outside favorite bank");
+            check(!store.favorites.hasSnapshot(patch(998)), "unsaved sound shows empty star");
             String edited=patch(2)+"20,95\n";
+            check(!store.favorites.hasSnapshot(edited), "edited sound is distinct before saving");
             check(!store.favorites.save(edited).alreadySaved,"edited same-name patch needs independent copy");
+            check(store.favorites.hasSnapshot(edited), "edited sound shows filled star after saving");
             String hostile="../../Fuera ★\nver=112\n0,1\n";
             store.favorites.save(hostile);
             List<PatchStore.Bank> all=store.scan(patch(0));
@@ -31,6 +35,9 @@ public final class FavoriteStoreTest {
             check(all.get(1).slots[0].isLazy(),"lazy favorites data");
             check(!new File(base,"Fuera ★").exists(),"no path injection");
             PatchStore reopened=new PatchStore(new File(base,"banks"),new File(base,"cache"));
+            check(!reopened.favorites.hasSnapshot(edited), "membership index is populated on scan at startup");
+            reopened.favorites.scan();
+            check(reopened.favorites.hasSnapshot(edited), "favorites membership persists after restart");
             check(reopened.favorites.save(edited).alreadySaved,"dedup survives restart");
             File interrupted=new File(base,"banks/.favorites/.pending-interrupted");interrupted.mkdir();
             Files.writeString(new File(interrupted,"patch.sy1").toPath(),patch(999));

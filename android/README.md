@@ -1,4 +1,4 @@
-# RiSynth2 Android 0.3.3
+# RiSynth2 Android 0.3.4
 
 Independent Android adaptation of the Oxo Synth2 C++ engine, compatible with Synth1 `.sy1` patches. Not an official Oxo Music or Daichi Laboratory application. Original engine and MIT notices are retained. No original Synth1 binaries, artwork, ROMs or third-party preset banks are bundled.
 
@@ -23,6 +23,10 @@ The monitor and copied report now contain CPU mode, owner TID, allowed/requested
 **Audio → Ayuda de rendimiento (ADPF · experimental)** is an optional, saved OFF/ON setting (initially OFF). The monitor shows whether the actual audio-thread hint session is active or unavailable; active does not guarantee a faster core or fewer glitches. Android service calls run on a separate worker, never in the audio callback. No affinity is forced, no synthesis work is moved to that worker, and no buffer is silently changed. Compare the same patch and buffer, then examine peaks, OV, XRuns and thermal status, not just average CPU. The feature can increase power use/heat.
 
 LPDL now reuses the exact double-precision logarithms of its fixed coefficient table, without changing the sound or quality. This targets LPDL parameter changes, not every patch. See [PERFORMANCE032.md](PERFORMANCE032.md) for the two independent changes, failure handling, headroom target, tests and comparison procedure. Install Preview 0.3.2 **over** your existing Preview, without uninstalling.
+
+## Live-performance layout (landscape tablets)
+
+On landscape screens at least 700 dp wide the app shows a stage layout with large knobs, pitch/mod strips, quick sound slots and an amber display; other screens keep the classic layout. The monitor stays visible. Behaviour, parameter mapping and a device test plan are in [LIVE_UI.md](LIVE_UI.md). It has not been verified on hardware yet.
 
 ## Features retained from 0.3.x
 

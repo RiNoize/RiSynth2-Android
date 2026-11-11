@@ -14,7 +14,7 @@ final class PianoView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final SparseIntArray fingers = new SparseIntArray();
     private final int[] held = new int[128];
-    private int base = 48;
+    private int base = 48, whiteDown = Color.rgb(92,184,255), blackDown = Color.rgb(32,119,185);
     private static final int[] WHITE = {0,2,4,5,7,9,11,12,14,16,17,19,21,23};
     private static final int[] BLACK = {1,3,6,8,10,13,15,18,20,22};
     private static final int[] BLACK_AFTER = {0,1,3,4,5,7,8,10,11,12};
@@ -25,6 +25,8 @@ final class PianoView extends View {
     }
     void setBase(int value) { releaseAll(); base = Math.max(12, Math.min(96, value)); invalidate(); }
     int base() { return base; }
+    /** Colours of pressed keys; the default stays the original blue. */
+    void setPressedColors(int white, int black) { whiteDown = white; blackDown = black; invalidate(); }
     void releaseAll() {
         fingers.clear();
         for (int i = 0; i < held.length; ++i) if (held[i] > 0) { held[i] = 0; notes.note(i, false); }
@@ -46,12 +48,12 @@ final class PianoView extends View {
     @Override protected void onDraw(Canvas c) {
         float w = getWidth() / 14f;
         for (int i = 0; i < WHITE.length; ++i) {
-            paint.setColor(held[base + WHITE[i]] > 0 ? Color.rgb(92,184,255) : Color.rgb(230,234,239));
+            paint.setColor(held[base + WHITE[i]] > 0 ? whiteDown : Color.rgb(230,234,239));
             c.drawRect(i * w + 1, 1, (i + 1) * w - 1, getHeight() - 1, paint);
         }
         for (int i = 0; i < BLACK.length; ++i) {
             float center = (BLACK_AFTER[i] + 1) * w;
-            paint.setColor(held[base + BLACK[i]] > 0 ? Color.rgb(32,119,185) : Color.rgb(24,30,38));
+            paint.setColor(held[base + BLACK[i]] > 0 ? blackDown : Color.rgb(24,30,38));
             c.drawRect(center - w * 0.31f, 0, center + w * 0.31f, getHeight() * 0.62f, paint);
         }
     }

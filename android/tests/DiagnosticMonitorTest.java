@@ -36,6 +36,7 @@ public final class DiagnosticMonitorTest {
         if(!m.compact().contains("ADPF no disponible")) throw new AssertionError("must not claim unavailable hints are active");
         s[23]=0;m.sample(s,203000,20250,2048,"off");
         if(!m.compact().contains("ADPF OFF")) throw new AssertionError("ADPF toggle state");
+        if(!m.brief().startsWith("ACTIVO · ") || !m.brief().contains("OV ") || !m.brief().contains("XRuns ")) throw new AssertionError("one-line header summary");
         System.out.println("Diagnostic monitor: CPU scales, render, irregular sampling, resets, unsupported xruns and bounded log OK");
     }
 }

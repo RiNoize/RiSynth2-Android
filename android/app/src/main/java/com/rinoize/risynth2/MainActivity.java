@@ -15,6 +15,7 @@ import android.net.Uri;
 import android.os.*;
 import android.provider.OpenableColumns;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.text.Editable;
 import android.view.*;
@@ -51,6 +52,16 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private TextView lcd, bankLabel, diagnostic, midiLabel, notice;
     private Button audioButton, favoriteButton;
     private boolean favoriteSaving;
+    private boolean currentPatchSaved;
+    private long favoriteCheckSequence;
+    private int livePitchBend = ControlMath.BEND_CENTER;
+    private boolean live; // landscape-tablet performance layout (Look / KnobView / StripView)
+    private LinearLayout chipRow;
+    private TextView lcdNumber, octaveLabel;
+    private View statusDot;
+    private int modValue;
+    private final Map<Integer, KnobView> knobs = new HashMap<>();
+    private final Map<Integer, Integer> knobSwitch = new HashMap<>();
     private final DiagnosticMonitor monitor = new DiagnosticMonitor();
     private TextView monitorDetail, importProgress;
     private AlertDialog importProgressDialog;
@@ -70,6 +81,22 @@ public final class MainActivity extends Activity implements MidiController.Liste
     private final Map<Integer, Button> toggles = new HashMap<>();
     private final Map<Integer, Integer> computerKeys = new HashMap<>();
     private final Runnable saveLater = this::saveSession;
+    private final Runnable favoriteCheckLater = () -> {
+        NativeEngine e = engine;
+        PatchStore localStore = store;
+        if (!live || e == null || localStore == null || destroyed) return;
+        // Take a snapshot only after editing settles, not for every touch movement.
+        final String snapshot = e.snapshot();
+        final long seq = ++favoriteCheckSequence;
+        worker.execute(() -> {
+            boolean saved = localStore.favorites.hasSnapshot(snapshot);
+            ui.post(() -> {
+                if (destroyed || seq != favoriteCheckSequence) return;
+                currentPatchSaved = saved;
+                if (live && !favoriteSaving && favoriteButton != null) favoriteButton.setText(favoriteLabel());
+            });
+        });
+    };
     private final Runnable routeChanged = () -> { if (foreground && wantsAudio && engine != null) startAudio(); };
     private final AudioDeviceCallback audioDevices = new AudioDeviceCallback() {
         @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) { scheduleRouteChange(); }
@@ -90,9 +117,9 @@ public final class MainActivity extends Activity implements MidiController.Liste
                         if (destroyed || !foreground) return;
                         lastStats = sample; lastStatsWall = wall; lastStatsCpu = cpu;
                         monitor.sample(sample, wall, cpu, requestedFrames, diagnosticContext() + "\n" + cpuLocation);
-                        diagnostic.setText(monitor.compact() + "\n" + cpuLocation.split("\\R", 2)[0]);
+                        showMonitor(sample, cpuLocation);
                         if (monitorDetail != null) monitorDetail.setText(monitor.detail());
-                        audioButton.setText(sample[0] > 0 ? "Detener audio" : "Iniciar audio");
+                        audioButton.setText(audioLabel(sample[0] > 0));
                         if (sample[11] < 0) { wantsAudio = false; notice.setText("Audio desconectado (" + (int)sample[11] + "). Pulsa Iniciar audio."); }
                     });
                 });
@@ -184,7 +211,9 @@ public final class MainActivity extends Activity implements MidiController.Liste
         parent.addView(b, new LinearLayout.LayoutParams(0, dp(48), 1)); b.setOnClickListener(v -> action.run()); return b;
     }
     private void buildUi() {
-        sliders.clear(); valueLabels.clear(); toggles.clear();
+        live = wantsLiveLayout();
+        sliders.clear(); valueLabels.clear(); toggles.clear(); knobs.clear(); knobSwitch.clear();
+        if (live) { buildLiveUi(); return; }
         root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(16,21,28));
         root.setPadding(dp(12), dp(12), dp(12), dp(12));
         root.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -200,11 +229,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1)); setContentView(root);
         body.addView(text("RiSynth2  " + BuildConfig.VERSION_NAME + "  ·  Android", 23));
         LinearLayout tools = row(body);
-        audioButton = button(tools, "Iniciar audio", () -> {
-            NativeEngine e = engine;
-            if (e != null && e.isStreaming()) { wantsAudio = false; stopAudio(); }
-            else { wantsAudio = true; startAudio(); }
-        });
+        audioButton = button(tools, audioLabel(false), this::toggleAudio);
         button(tools, "PANIC", this::panic);
         button(tools, "Audio", this::audioDialog);
         button(tools, "MIDI", this::midiDialog);
@@ -225,18 +250,9 @@ public final class MainActivity extends Activity implements MidiController.Liste
         LinearLayout files = row(body);
         button(files, "Importar", this::importDialog);
         button(files, "Exportar .sy1", this::exportDialog);
-        button(files, "INIT", () -> {
-            new AlertDialog.Builder(this).setTitle("Inicializar sonido")
-                .setMessage("Reemplaza las ediciones actuales por INIT. No borra bancos.")
-                .setNegativeButton("Cancelar", null).setPositiveButton("Inicializar", (d, w) -> applyPatch(0, 0)).show();
-        });
+        button(files, "INIT", this::initDialog);
         button(files, "99 parametros", this::allParameters);
-        LinearLayout togglesRow = row(body);
-        for (int id : new int[]{59,65,66,73,77}) {
-            String label = switch(id) { case 59 -> "ARP"; case 65 -> "Delay"; case 66 -> "Chorus"; case 73 -> "Unison"; default -> "Effect"; };
-            Button b = button(togglesRow, label, () -> { NativeEngine e = engine; if (e != null) { e.param(id, e.values()[id] == 0 ? 1 : 0); refreshControls(); scheduleSave(); } });
-            b.setTag(label); toggles.put(id, b);
-        }
+        addToggles(body);
         LinearLayout columns = row(body);
         boolean wide = getResources().getConfiguration().screenWidthDp >= 700;
         columns.setOrientation(wide ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
@@ -263,6 +279,298 @@ public final class MainActivity extends Activity implements MidiController.Liste
         body.addView(text("El monitor de arriba permanece visible. Tocalo para detalles, copiar o reiniciar. Uso en primer plano.", 11));
         refreshControls(); refreshLcd();
     }
+    // ---- Live-performance layout ("Hardware ámbar"). Landscape tablets only; other screens keep the classic layout. ----
+    private boolean wantsLiveLayout() {
+        Configuration c = getResources().getConfiguration();
+        return c.screenWidthDp >= 700 && c.screenWidthDp > c.screenHeightDp;
+    }
+    private LinearLayout.LayoutParams params(int width, int height, float weight, int topMarginDp) {
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(width, height, weight);
+        p.topMargin = dp(topMarginDp);
+        return p;
+    }
+    private Button navButton(LinearLayout parent, String label, int fill, int textColor, int stroke, Runnable action) {
+        Button b = Look.button(this, label, fill, textColor, stroke);
+        b.setOnClickListener(v -> action.run());
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, dp(48));
+        p.leftMargin = dp(8);
+        parent.addView(b, p);
+        return b;
+    }
+    private String audioLabel(boolean active) {
+        if (live) return active ? "■ Detener" : "▶ Iniciar";
+        return active ? "Detener audio" : "Iniciar audio";
+    }
+    private void toggleAudio() {
+        NativeEngine e = engine;
+        if (e != null && e.isStreaming()) { wantsAudio = false; stopAudio(); }
+        else { wantsAudio = true; startAudio(); }
+    }
+    private void showMonitor(double[] sample, String cpuLocation) {
+        String place = cpuLocation.split("\\R", 2)[0];
+        if (!live) { diagnostic.setText(monitor.compact() + "\n" + place); return; }
+        // Same counters as the classic monitor, condensed to two lines. Everything else is one tap away.
+        String[] parts = place.split(" · ", 3);
+        String shortPlace = parts.length > 1 ? parts[0] + " · " + parts[1] : place;
+        if (shortPlace.length() > 46) shortPlace = shortPlace.substring(0, 45) + "…";
+        diagnostic.setText(monitor.brief() + "\n" + shortPlace);
+        if (statusDot != null) statusDot.setBackground(Look.round(sample[0] > 0 ? Look.CYAN : Look.MUTED, dp(5), 0, 0));
+    }
+    private KnobView liveKnob(String name, int id) {
+        String[] parts = info[id].split("\\|");
+        KnobView knob = new KnobView(this, name);
+        knob.setRange(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));
+        knob.setOnChange(v -> { NativeEngine e = engine; if (e != null) e.param(id, v); scheduleSave(); });
+        knobs.put(id, knob);
+        return knob;
+    }
+    /** A knob whose short tap also switches an effect on or off (Delay, Chorus). */
+    private KnobView liveSwitchKnob(String name, int id, int switchId) {
+        KnobView knob = liveKnob(name, id);
+        knob.setToggle(on -> {
+            NativeEngine e = engine;
+            if (e != null) e.param(switchId, on ? 1 : 0);
+            Toast.makeText(this, name + (on ? " activado" : " desactivado"), Toast.LENGTH_SHORT).show();
+            scheduleSave();
+        });
+        knobSwitch.put(id, switchId);
+        return knob;
+    }
+    private void addKnobGroup(LinearLayout parent, String title, float weight, KnobView... group) {
+        if (parent.getChildCount() > 0) {
+            View divider = new View(this); divider.setBackgroundColor(Look.LINE);
+            LinearLayout.LayoutParams d = new LinearLayout.LayoutParams(dp(1), -1);
+            d.leftMargin = dp(14); d.rightMargin = dp(14); d.topMargin = dp(4); d.bottomMargin = dp(4);
+            parent.addView(divider, d);
+        }
+        LinearLayout column = new LinearLayout(this); column.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout titleRow = new LinearLayout(this); titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        TextView heading = Look.label(this, title, 12, Look.MUTED, Look.HEADING); heading.setLetterSpacing(0.14f);
+        titleRow.addView(heading);
+        View line = new View(this); line.setBackgroundColor(Look.LINE);
+        LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(0, dp(1), 1); lineParams.leftMargin = dp(10);
+        titleRow.addView(line, lineParams);
+        column.addView(titleRow, new LinearLayout.LayoutParams(-1, dp(20)));
+        LinearLayout knobRow = new LinearLayout(this);
+        for (KnobView knob : group) knobRow.addView(knob, new LinearLayout.LayoutParams(0, -1, 1));
+        column.addView(knobRow, new LinearLayout.LayoutParams(-1, 0, 1));
+        parent.addView(column, new LinearLayout.LayoutParams(0, -1, weight));
+    }
+    private static String noteName(int midiNote) {
+        String[] names = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+        return names[midiNote % 12] + (midiNote / 12 - 1);
+    }
+    private String octaveText() {
+        return piano == null ? "" : noteName(piano.base()) + "–" + noteName(piano.base() + 23);
+    }
+    private void shiftOctave(int semitones) {
+        if (piano == null) return;
+        piano.setBase(piano.base() + semitones);
+        if (octaveLabel != null) octaveLabel.setText(octaveText());
+    }
+    private void buildLiveUi() {
+        int keptBase = piano == null ? 48 : piano.base();
+        root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Look.GROUND);
+        root.setPadding(dp(14), dp(6), dp(14), dp(6));
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            view.setPadding(dp(14) + insets.getSystemWindowInsetLeft(), dp(6) + insets.getSystemWindowInsetTop(), dp(14) + insets.getSystemWindowInsetRight(), dp(6) + insets.getSystemWindowInsetBottom());
+            return insets.consumeSystemWindowInsets();
+        });
+
+        // Header: name, monitor (always visible, tap for details) and the main actions.
+        LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout brand = new LinearLayout(this); brand.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout titleRow = new LinearLayout(this); titleRow.setGravity(Gravity.BOTTOM);
+        titleRow.addView(Look.label(this, "RiSynth2", 22, Look.TEXT, Look.HEADING));
+        TextView version = Look.label(this, BuildConfig.VERSION_NAME, 12, Look.MUTED, Typeface.MONOSPACE);
+        version.setPadding(dp(8), 0, 0, dp(3)); titleRow.addView(version);
+        brand.addView(titleRow);
+        LinearLayout pill = new LinearLayout(this); pill.setGravity(Gravity.CENTER_VERTICAL); pill.setMinimumHeight(dp(30));
+        statusDot = new View(this); statusDot.setBackground(Look.round(Look.MUTED, dp(5), 0, 0));
+        pill.addView(statusDot, new LinearLayout.LayoutParams(dp(9), dp(9)));
+        diagnostic = Look.label(this, "Preparando monitor…", 11, Look.TEXT, Typeface.MONOSPACE);
+        diagnostic.setMaxLines(2); diagnostic.setEllipsize(TextUtils.TruncateAt.END); diagnostic.setPadding(dp(8), 0, 0, 0);
+        pill.addView(diagnostic, new LinearLayout.LayoutParams(0, -2, 1));
+        pill.setOnClickListener(v -> monitorDialog());
+        pill.setContentDescription("Monitor CPU y audio. Tocar para detalles, copiar informe o reiniciar contadores.");
+        brand.addView(pill, new LinearLayout.LayoutParams(-1, -2));
+        header.addView(brand, new LinearLayout.LayoutParams(0, -2, 1));
+        audioButton = navButton(header, audioLabel(false), Look.PANEL2, Look.TEXT, Look.LINE, this::toggleAudio);
+        audioButton.setMinWidth(dp(116)); audioButton.setMinimumWidth(dp(116));
+        navButton(header, "Sonidos", Look.PANEL2, Look.TEXT, Look.LINE, this::libraryMenu);
+        navButton(header, "Audio", Look.PANEL2, Look.TEXT, Look.LINE, this::audioDialog);
+        navButton(header, "MIDI", Look.PANEL2, Look.TEXT, Look.LINE, this::midiDialog);
+        navButton(header, "Editar", Look.PANEL2, Look.TEXT, Look.LINE, this::editDialog);
+        navButton(header, "Pánico", Look.DANGER, Look.DARK, 0, this::panic);
+        root.addView(header, new LinearLayout.LayoutParams(-1, -2));
+
+        // Status line: last message (tap to read it all) and the MIDI input.
+        LinearLayout strip = new LinearLayout(this); strip.setGravity(Gravity.CENTER_VERTICAL);
+        notice = Look.label(this, "Compatible con patches Synth1. Sin ROM ni firmware.", 12, Look.MUTED, Typeface.DEFAULT);
+        notice.setSingleLine(true); notice.setEllipsize(TextUtils.TruncateAt.END);
+        notice.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage(notice.getText()).setPositiveButton("Cerrar", null).show());
+        strip.addView(notice, new LinearLayout.LayoutParams(0, -2, 1));
+        midiLabel = Look.label(this, midiName, 12, Look.MUTED, Typeface.DEFAULT);
+        midiLabel.setSingleLine(true); midiLabel.setEllipsize(TextUtils.TruncateAt.END);
+        midiLabel.setMaxWidth(dp(340)); midiLabel.setPadding(dp(16), 0, 0, 0);
+        strip.addView(midiLabel);
+        root.addView(strip, params(-1, dp(24), 0, 2));
+
+        // Sound selector: big previous/next, amber display, save-as-favourite star.
+        LinearLayout selector = new LinearLayout(this);
+        Button previous = Look.button(this, "◀", Look.PANEL2, Look.TEXT, Look.LINE); previous.setTextSize(30);
+        previous.setContentDescription("Sonido anterior"); previous.setOnClickListener(v -> changePatch(-1));
+        selector.addView(previous, new LinearLayout.LayoutParams(dp(92), -1));
+        LinearLayout screen = new LinearLayout(this); screen.setGravity(Gravity.CENTER_VERTICAL);
+        screen.setBackground(Look.round(Look.LCD, dp(16), Look.LCD_LINE, dp(1))); screen.setPadding(dp(20), dp(6), dp(12), dp(6));
+        screen.setOnClickListener(v -> patchDialog());
+        LinearLayout readout = new LinearLayout(this); readout.setOrientation(LinearLayout.VERTICAL);
+        bankLabel = Look.label(this, "RiSynth2 · INIT", 12, Look.AMBER_DIM, Typeface.MONOSPACE);
+        bankLabel.setLetterSpacing(0.08f); bankLabel.setSingleLine(true); bankLabel.setEllipsize(TextUtils.TruncateAt.END);
+        bankLabel.setOnClickListener(v -> bankDialog());
+        readout.addView(bankLabel, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout nameRow = new LinearLayout(this); nameRow.setGravity(Gravity.BOTTOM);
+        lcdNumber = Look.label(this, "001", 30, Look.AMBER_DIM, Typeface.MONOSPACE);
+        lcd = Look.label(this, "INIT", 38, Look.AMBER, Look.HEADING);
+        lcd.setSingleLine(true); lcd.setEllipsize(TextUtils.TruncateAt.END);
+        lcd.setShadowLayer(dp(10), 0, 0, 0x88F2AE45); lcd.setPadding(dp(16), 0, 0, 0);
+        nameRow.addView(lcdNumber); nameRow.addView(lcd, new LinearLayout.LayoutParams(0, -2, 1));
+        readout.addView(nameRow, new LinearLayout.LayoutParams(-1, -2));
+        screen.addView(readout, new LinearLayout.LayoutParams(0, -2, 1));
+        favoriteButton = Look.button(this, favoriteLabel(), 0xFF3A2A12, Look.AMBER, Look.AMBER_DIM);
+        favoriteButton.setTextSize(28); favoriteButton.setPadding(0, 0, 0, 0);
+        favoriteButton.setContentDescription("Guardar este sonido en Favoritos"); favoriteButton.setOnClickListener(v -> saveFavorite());
+        screen.addView(favoriteButton, new LinearLayout.LayoutParams(dp(60), dp(60)));
+        LinearLayout.LayoutParams screenParams = new LinearLayout.LayoutParams(0, -1, 1);
+        screenParams.leftMargin = dp(12); screenParams.rightMargin = dp(12);
+        selector.addView(screen, screenParams);
+        Button next = Look.button(this, "▶", Look.PANEL2, Look.TEXT, Look.LINE); next.setTextSize(30);
+        next.setContentDescription("Sonido siguiente"); next.setOnClickListener(v -> changePatch(1));
+        selector.addView(next, new LinearLayout.LayoutParams(dp(92), -1));
+        root.addView(selector, params(-1, dp(84), 0, 6));
+
+        // Quick slots: the page of 8 sounds around the current one (filled by refreshChips).
+        chipRow = new LinearLayout(this);
+        root.addView(chipRow, params(-1, dp(44), 0, 8));
+
+        // Knobs: the controls a performer touches most. Everything else is under Editar.
+        LinearLayout panel = new LinearLayout(this);
+        panel.setBackground(Look.round(Look.PANEL, dp(18), Look.LINE, dp(1))); panel.setPadding(dp(18), dp(8), dp(18), dp(8));
+        addKnobGroup(panel, "FILTRO", 3, liveKnob("Cutoff", 19), liveKnob("Reso", 20), liveKnob("Env", 21));
+        addKnobGroup(panel, "AMPLITUD", 2, liveKnob("Attack", 25), liveKnob("Release", 28));
+        addKnobGroup(panel, "EFECTOS · TOCAR = ON/OFF", 2, liveSwitchKnob("Delay Mix", 37, 65), liveSwitchKnob("Chorus Mix", 56, 66));
+        KnobView volumeKnob = new KnobView(this, "Volumen");
+        volumeKnob.setRange(0, 100); volumeKnob.setValue(volume);
+        volumeKnob.setOnChange(v -> { volume = v; NativeEngine e = engine; if (e != null) e.volume(v); scheduleSave(); });
+        addKnobGroup(panel, "MASTER", 1, volumeKnob);
+        root.addView(panel, params(-1, 0, 5, 8));
+
+        // Stage: pitch bend, mod wheel, octave shift and keyboard.
+        LinearLayout stage = new LinearLayout(this);
+        StripView pitch = new StripView(this, "Pitch", ControlMath.BEND_MAX, ControlMath.BEND_CENTER, true,
+            v -> { livePitchBend = v; midi(0xE0, ControlMath.bendLow(v), ControlMath.bendHigh(v)); });
+        StripView mod = new StripView(this, "Mod", 127, modValue, false, v -> { modValue = v; midi(0xB0, 1, v); });
+        stage.addView(pitch, new LinearLayout.LayoutParams(dp(56), -1));
+        LinearLayout.LayoutParams modParams = new LinearLayout.LayoutParams(dp(56), -1); modParams.leftMargin = dp(8);
+        stage.addView(mod, modParams);
+        LinearLayout octaves = new LinearLayout(this); octaves.setOrientation(LinearLayout.VERTICAL);
+        Button octaveUp = Look.button(this, "+ Oct", Look.PANEL2, Look.TEXT, Look.LINE);
+        octaveUp.setContentDescription("Subir una octava"); octaveUp.setOnClickListener(v -> shiftOctave(12));
+        octaveLabel = Look.label(this, "", 14, Look.MUTED, Typeface.MONOSPACE); octaveLabel.setGravity(Gravity.CENTER);
+        Button octaveDown = Look.button(this, "− Oct", Look.PANEL2, Look.TEXT, Look.LINE);
+        octaveDown.setContentDescription("Bajar una octava"); octaveDown.setOnClickListener(v -> shiftOctave(-12));
+        octaves.addView(octaveUp, new LinearLayout.LayoutParams(-1, 0, 1));
+        octaves.addView(octaveLabel, new LinearLayout.LayoutParams(-1, dp(26)));
+        octaves.addView(octaveDown, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout.LayoutParams octaveParams = new LinearLayout.LayoutParams(dp(92), -1);
+        octaveParams.leftMargin = dp(8); octaveParams.rightMargin = dp(8);
+        stage.addView(octaves, octaveParams);
+        piano = new PianoView(this, (key, down) -> midi(down ? 0x90 : 0x80, key, down ? 100 : 0));
+        piano.setPressedColors(Look.KEY_DOWN_WHITE, Look.KEY_DOWN_BLACK); piano.setBackgroundColor(0xFF0F0D0A);
+        piano.setBase(keptBase); octaveLabel.setText(octaveText());
+        stage.addView(piano, new LinearLayout.LayoutParams(0, -1, 1));
+        root.addView(stage, params(-1, 0, 4, 8));
+
+        setContentView(root);
+        refreshControls(); refreshLcd();
+    }
+    private String favoriteLabel() { return !live ? "☆ Guardar favorito" : currentPatchSaved ? "★" : "☆"; }
+    private void scheduleFavoriteCheck() {
+        if (!live || destroyed) return;
+        ++favoriteCheckSequence;
+        ui.removeCallbacks(favoriteCheckLater);
+        ui.postDelayed(favoriteCheckLater, 350);
+    }
+    /** Pitch bend must not remain detuned when the live strip is replaced or the app pauses. */
+    private void centerLivePitch() {
+        if (livePitchBend == ControlMath.BEND_CENTER) return;
+        livePitchBend = ControlMath.BEND_CENTER;
+        midi(0xE0, ControlMath.bendLow(ControlMath.BEND_CENTER), ControlMath.bendHigh(ControlMath.BEND_CENTER));
+    }
+    private void refreshChips() {
+        if (chipRow == null) return;
+        chipRow.removeAllViews();
+        List<PatchStore.Bank> list = banks; int index = bankIndex, current = slot;
+        if (index < 0 || index >= list.size()) return;
+        PatchStore.Bank bank = list.get(index);
+        final String key = bank.key;
+        int page = current / 8 * 8;
+        for (int i = 0; i < 8; ++i) {
+            final int target = page + i;
+            PatchStore.Patch patch = target < 128 ? bank.slots[target] : null;
+            TextView chip = Look.chip(this, Integer.toString(target + 1), patch == null ? "—" : patch.name, target == current, patch != null);
+            if (patch != null) chip.setOnClickListener(v -> applyPatch(findBank(banks, key), target));
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, -1, 1);
+            if (i > 0) p.leftMargin = dp(8);
+            chipRow.addView(chip, p);
+        }
+    }
+    private void libraryMenu() {
+        String[] items = {"Bancos y sonidos", "★ Favoritos", "Importar sonidos…", "Exportar sonido actual (.sy1)", "Inicializar sonido (INIT)"};
+        new AlertDialog.Builder(this).setTitle("Sonidos").setItems(items, (d, which) -> {
+            switch (which) {
+                case 0: bankDialog(); break;
+                case 1: bankDialog(true); break;
+                case 2: importDialog(); break;
+                case 3: exportDialog(); break;
+                default: initDialog(); break;
+            }
+        }).setNegativeButton("Cerrar", null).show();
+    }
+    private void initDialog() {
+        new AlertDialog.Builder(this).setTitle("Inicializar sonido")
+            .setMessage("Reemplaza las ediciones actuales por INIT. No borra bancos.")
+            .setNegativeButton("Cancelar", null).setPositiveButton("Inicializar", (d, w) -> applyPatch(0, 0)).show();
+    }
+    /** Everything that is not a performance knob: switches, oscillator and envelope extras, tempo, all 99 parameters. */
+    private void editDialog() {
+        if (info == null) return;
+        sliders.clear(); valueLabels.clear(); toggles.clear();
+        LinearLayout panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(16), dp(8), dp(16), dp(8));
+        panel.addView(text("INTERRUPTORES", 14));
+        addToggles(panel);
+        panel.addView(text("OSCILADORES", 14));
+        addSlider(panel, "Mezcla OSC", 5); addSlider(panel, "Detune OSC 1", 76); addSlider(panel, "Suboscilador", 95);
+        panel.addView(text("AMPLITUD Y EJECUCION", 14));
+        addSlider(panel, "Decay", 26); addSlider(panel, "Sustain", 27); addSlider(panel, "Polifonia", 94);
+        addSpecialSlider(panel, "Tempo", 30, 300, bpm, v -> { bpm = v; NativeEngine e = engine; if (e != null) e.tempo(v); scheduleSave(); });
+        Button all = new Button(this); all.setText("Los 99 parámetros…"); all.setAllCaps(false);
+        panel.addView(all, new LinearLayout.LayoutParams(-1, dp(48)));
+        ScrollView scroll = new ScrollView(this); scroll.addView(panel);
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Editar").setView(scroll).setNegativeButton("Cerrar", null).create();
+        all.setOnClickListener(v -> { dialog.dismiss(); allParameters(); });
+        dialog.setOnDismissListener(d -> { sliders.clear(); valueLabels.clear(); toggles.clear(); });
+        dialog.show();
+        refreshControls();
+    }
+    private void addToggles(LinearLayout parent) {
+        LinearLayout togglesRow = row(parent);
+        for (int id : new int[]{59,65,66,73,77}) {
+            String label = switch(id) { case 59 -> "ARP"; case 65 -> "Delay"; case 66 -> "Chorus"; case 73 -> "Unison"; default -> "Effect"; };
+            Button b = button(togglesRow, label, () -> { NativeEngine e = engine; if (e != null) { e.param(id, e.values()[id] == 0 ? 1 : 0); refreshControls(); scheduleSave(); } });
+            b.setTag(label); toggles.put(id, b);
+        }
+    }
     private interface IntChange { void changed(int value); }
     private SeekBar addSpecialSlider(LinearLayout parent, String name, int min, int max, int value, IntChange change) {
         LinearLayout r = row(parent); TextView label = text(name + " " + value, 13);
@@ -288,13 +596,28 @@ public final class MainActivity extends Activity implements MidiController.Liste
             int id = item.getKey(), min = Integer.parseInt(info[id].split("\\|")[1]); item.getValue().setProgress(values[id] - min);
         }
         for (Map.Entry<Integer, Button> item : toggles.entrySet()) item.getValue().setText(item.getValue().getTag() + (values[item.getKey()] != 0 ? " ●" : " ○"));
+        for (Map.Entry<Integer, KnobView> item : knobs.entrySet()) {
+            item.getValue().setValue(values[item.getKey()]);
+            Integer switchId = knobSwitch.get(item.getKey());
+            if (switchId != null) item.getValue().setOn(values[switchId] != 0);
+        }
         refreshing = false;
     }
     private void refreshLcd() {
         if (lcd == null) return;
-        lcd.setText(String.format(Locale.ROOT, "%03d · %s", slot + 1, patchName));
         List<PatchStore.Bank> list = banks;
-        bankLabel.setText(bankIndex >= 0 && bankIndex < list.size() ? list.get(bankIndex).name : "RiSynth2 · INIT");
+        String bankName = bankIndex >= 0 && bankIndex < list.size() ? list.get(bankIndex).name : "RiSynth2 · INIT";
+        if (live) {
+            lcdNumber.setText(String.format(Locale.ROOT, "%03d", slot + 1));
+            lcd.setText(patchName);
+            bankLabel.setText(String.format(Locale.ROOT, "%s · SLOT %03d / 128", bankName.toUpperCase(Locale.ROOT), slot + 1));
+            if (!favoriteSaving) favoriteButton.setText(favoriteLabel());
+            refreshChips();
+            scheduleFavoriteCheck();
+        } else {
+            lcd.setText(String.format(Locale.ROOT, "%03d · %s", slot + 1, patchName));
+            bankLabel.setText(bankName);
+        }
         midiLabel.setText(midiName);
     }
     private static int findBank(List<PatchStore.Bank> list, String key) {
@@ -382,7 +705,7 @@ public final class MainActivity extends Activity implements MidiController.Liste
         if (destroyed || engine == null || favoriteSaving || importing) return;
         final String snapshot = engine.snapshot();
         favoriteSaving = true;
-        favoriteButton.setEnabled(false); favoriteButton.setText("Guardando…");
+        favoriteButton.setEnabled(false); favoriteButton.setText(live ? "…" : "Guardando…");
         // The snapshot is captured at tap time, so browsing the next patch
         // immediately cannot save a different sound. Only file I/O is queued.
         worker.execute(() -> {
@@ -405,7 +728,10 @@ public final class MainActivity extends Activity implements MidiController.Liste
             } catch (Exception ex) { message("No se pudo guardar el favorito: " + ex.getMessage()); }
             finally { ui.post(() -> {
                 favoriteSaving = false;
-                if (!destroyed) { favoriteButton.setEnabled(true); favoriteButton.setText("☆ Guardar favorito"); }
+                if (!destroyed) {
+                    if (favoriteButton != null) favoriteButton.setEnabled(true);
+                    scheduleFavoriteCheck();
+                }
             }); }
         });
     }
@@ -620,7 +946,11 @@ public final class MainActivity extends Activity implements MidiController.Liste
             });
         }
     }
-    private void scheduleSave() { ui.removeCallbacks(saveLater); ui.postDelayed(saveLater, 300); }
+    private void scheduleSave() {
+        ui.removeCallbacks(saveLater);
+        ui.postDelayed(saveLater, 300);
+        scheduleFavoriteCheck();
+    }
     private void saveSession() {
         synchronized (libraryLock) {
             NativeEngine e = engine; if (e == null) return;
@@ -634,11 +964,18 @@ public final class MainActivity extends Activity implements MidiController.Liste
         super.onResume(); foreground = true; ui.removeCallbacks(poll); ui.post(poll); if (wantsAudio) startAudio();
     }
     @Override protected void onPause() {
-        foreground = false; ui.removeCallbacks(poll); ui.removeCallbacks(routeChanged); ui.removeCallbacks(saveLater);
+        centerLivePitch();
+        foreground = false; ui.removeCallbacks(poll); ui.removeCallbacks(routeChanged); ui.removeCallbacks(saveLater); ui.removeCallbacks(favoriteCheckLater);
         panic(); saveSession(); stopAudio(); audioManager.abandonAudioFocusRequest(focus); super.onPause();
     }
     @Override public void onConfigurationChanged(Configuration config) {
-        super.onConfigurationChanged(config); panic(); buildUi();
+        super.onConfigurationChanged(config);
+        centerLivePitch();
+        panic();
+        ui.removeCallbacks(favoriteCheckLater);
+        ++favoriteCheckSequence;
+        currentPatchSaved = false;
+        buildUi();
     }
     @Override protected void onDestroy() {
         destroyed = true; foreground = false; cancelImport.set(true); patchRequest.incrementAndGet();
