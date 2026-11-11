@@ -7,13 +7,14 @@ final class NativeEngine implements AutoCloseable {
     private long handle = create();
     private boolean streaming;
     private String loadedName = "INIT";
-    synchronized String start(int device, int frames, boolean lowLatency, boolean performanceHints) {
+    synchronized String start(int device, int frames, boolean lowLatency, boolean performanceHints, int cpuMode) {
         if (handle == 0) return "Motor cerrado";
-        String error = startNative(handle, device, frames, lowLatency, performanceHints);
+        String error = startNative(handle, device, frames, lowLatency, performanceHints, cpuMode);
         streaming = error.isEmpty();
         return error;
     }
     synchronized boolean isStreaming() { return streaming; }
+    synchronized String cpuPlacement() { return handle == 0 ? "CPU: motor cerrado" : cpuPlacementNative(handle); }
     synchronized void stop() { streaming = false; if (handle != 0) stopNative(handle); }
     synchronized void midi(int status, int d1, int d2) { if (handle != 0) midiNative(handle, status, d1, d2); }
     synchronized void panic() { if (handle != 0) panicNative(handle); }
@@ -44,7 +45,8 @@ final class NativeEngine implements AutoCloseable {
     static native String[] parameterInfo();
     private static native long create();
     private static native void destroy(long h);
-    private static native String startNative(long h, int device, int frames, boolean lowLatency, boolean performanceHints);
+    private static native String startNative(long h, int device, int frames, boolean lowLatency, boolean performanceHints, int cpuMode);
+    private static native String cpuPlacementNative(long h);
     private static native void stopNative(long h);
     private static native void midiNative(long h, int status, int d1, int d2);
     private static native void panicNative(long h);

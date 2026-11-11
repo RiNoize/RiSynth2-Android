@@ -2,7 +2,7 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [master, codex/risynth2-cpu-affinity-033]
     paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
   pull_request:
     paths: ['android/**', 'EngineCore/**', '.github/workflows/android.yml']
@@ -77,26 +77,26 @@ jobs:
         working-directory: android
         run: |
           mkdir -p ../dist/standard ../dist/preview
-          cp app/build/outputs/apk/release/app-release.apk ../dist/standard/RiSynth2-0.3.2-arm64.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/standard/RiSynth2-0.3.3-arm64.apk
           gradle --no-daemon -Prisynth2SideBySide=true :app:assembleRelease :app:lintRelease
-          cp app/build/outputs/apk/release/app-release.apk ../dist/preview/RiSynth2-0.3.2-preview-arm64.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/preview/RiSynth2-0.3.3-preview-arm64.apk
       - name: Package APK
         run: |
           for apk in dist/*/*.apk; do
             "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
             "$ANDROID_HOME/build-tools/35.0.0/zipalign" -c -P 16 4 "$apk"
           done
-          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/preview/RiSynth2-0.3.2-preview-arm64.apk | grep -E "^(package:|application-label:)"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging dist/preview/RiSynth2-0.3.3-preview-arm64.apk | grep -E "^(package:|application-label:)"
           for dir in dist/standard dist/preview; do (cd "$dir" && sha256sum *.apk > SHA256SUMS.txt); done
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.3.2-preview-arm64
+          name: RiSynth2-0.3.3-preview-arm64
           path: dist/preview/*
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
-          name: RiSynth2-0.3.2-standard-arm64
+          name: RiSynth2-0.3.3-standard-arm64
           path: dist/standard/*
           if-no-files-found: error
           retention-days: 30

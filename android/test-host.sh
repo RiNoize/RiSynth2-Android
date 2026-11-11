@@ -18,3 +18,6 @@ ${CXX:-clang++} -std=c++20 -O2 -Wall -Wextra -I"$ROOT" "$ROOT/android/tests/metr
 
 ${CXX:-clang++} -std=c++20 -O2 -Wall -Wextra -Werror -pthread -I"$ROOT" "$ROOT/android/tests/hints_test.cpp" -o "$BUILD/hints_test"
 "$BUILD/hints_test"
+
+${CXX:-clang++} -std=c++20 -O2 -Wall -Wextra -Werror -pthread -I"$ROOT" "$ROOT/android/tests/audio_cpu_placement_test.cpp" -o "$BUILD/audio_cpu_placement_test"
+"$BUILD/audio_cpu_placement_test"

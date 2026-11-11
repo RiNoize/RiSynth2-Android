@@ -2,6 +2,7 @@
 #include <aaudio/AAudio.h>
 #include <unistd.h>
 #include "AndroidHintBackend.hpp"
+#include "audio_cpu_placement.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -28,6 +29,9 @@ public:
     Synth synth;
     risynth2::AndroidHintBackend hintBackend;
     risynth2::AudioPerformanceHints hints{hintBackend};
+    rimu2000::AudioCpuPlacement cpuPlacement;
+    static constexpr int kCpuWords = (CPU_SETSIZE + 63) / 64;
+    std::array<std::atomic<uint64_t>, kCpuWords> seenCpus{};
     EventQueue<Event, 512> events;
     std::array<std::atomic<int>, kParamCount> parameters{};
     std::atomic<bool> panic{false}, active{false};
@@ -40,6 +44,20 @@ public:
     AAudioStream* stream = nullptr; // lifecycle and stats serialized by Java
     std::array<float, kChunk> left{}, right{};
     int volume = 48;
+    void observeCpu(int cpu) noexcept {
+        if (cpu >= 0 && cpu < CPU_SETSIZE)
+            seenCpus[unsigned(cpu) / 64].fetch_or(uint64_t(1) << (unsigned(cpu) % 64), std::memory_order_relaxed);
+    }
+    // Called from UI monitor only. Never format text during the audio callback.
+    std::string cpuDescription() const {
+        cpu_set_t seen{};
+        CPU_ZERO(&seen);
+        for (int i = 0; i < CPU_SETSIZE; ++i)
+            if (seenCpus[unsigned(i) / 64].load(std::memory_order_relaxed) & (uint64_t(1) << (unsigned(i) % 64)))
+                CPU_SET(i, &seen);
+        return cpuPlacement.describe() + "\nCPUs vistas (muestreo de callbacks): "
+            + rimu2000::cpu_placement::maskText(seen);
+    }
     Engine() {
         synth.SetPatch(kInitPatchValues);
         synth.SetVolume(volume);
@@ -91,6 +109,16 @@ public:
     static aaudio_data_callback_result_t onData(AAudioStream*, void* user, void* audio, int32_t frames) {
         auto& e = *static_cast<Engine*>(user);
         const auto begin = std::chrono::steady_clock::now();
+        // Exactly one AAudio callback owns all synth rendering; no UI/ADPF pinning.
+        if (!e.active.load(std::memory_order_acquire)) {
+            e.cpuPlacement.restoreCurrentThread();
+            return AAUDIO_CALLBACK_RESULT_STOP;
+        }
+        const int tid = int(gettid());
+        e.cpuPlacement.enterAudioThread(tid); // self-only, once per new thread
+        const int actualCpu = sched_getcpu();
+        e.cpuPlacement.observeCpu(actualCpu);
+        e.observeCpu(actualCpu);
         auto* out = static_cast<float*>(audio);
         e.drain(true);
         e.synth.BeginBlock(frames);
@@ -120,7 +148,7 @@ public:
             const int64_t doneNs = std::chrono::duration_cast<std::chrono::nanoseconds>(finish.time_since_epoch()).count();
             // The kernel TID is taken HERE, not from Java/UI or the hint worker.
             // Only POD publication: no ADPF/Binder call, lock or allocation.
-            e.hints.submit({int32_t(gettid()), int64_t(double(frames) * 1.0e9 / e.synth.SampleRate()), workNs, doneNs});
+            e.hints.submit({int32_t(tid), int64_t(double(frames) * 1.0e9 / e.synth.SampleRate()), workNs, doneNs});
             finish = std::chrono::steady_clock::now(); // total Render includes publication overhead
         }
         const auto nanos = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(finish - begin).count());
@@ -144,11 +172,13 @@ public:
         synth.Reset();
         voices.store(0);
     }
-    std::string start(int device, int requestedBuffer, bool lowLatency, bool performanceHints) {
+    std::string start(int device, int requestedBuffer, bool lowLatency, bool performanceHints, int cpuMode) {
         stop();
         error.store(0); clips.store(0); dropped.store(0);
         renderPercent.store(0); peakPercent.store(0);
         metrics.clear(); voiceNanos.store(0); effectNanos.store(0); stoppedXruns = 0; ++streamGeneration;
+        cpuPlacement.prepare(cpuMode); // sysfs only on control worker before AAudio start
+        for (auto& word : seenCpus) word.store(0, std::memory_order_relaxed);
         AAudioStreamBuilder* builder = nullptr;
         aaudio_result_t result = AAudio_createStreamBuilder(&builder);
         if (result != AAUDIO_OK) return AAudio_convertResultToText(result);
@@ -203,8 +233,8 @@ JNIEXPORT jlong JNICALL Java_com_rinoize_risynth2_NativeEngine_create(JNIEnv* en
     catch (const std::exception& e) { throwJava(env, e.what()); return 0; }
 }
 JNIEXPORT void JNICALL Java_com_rinoize_risynth2_NativeEngine_destroy(JNIEnv*, jclass, jlong h) { delete engine(h); }
-JNIEXPORT jstring JNICALL Java_com_rinoize_risynth2_NativeEngine_startNative(JNIEnv* env, jclass, jlong h, jint device, jint buffer, jboolean low, jboolean hint) {
-    try { return env->NewStringUTF(engine(h)->start(device, buffer, low, hint).c_str()); }
+JNIEXPORT jstring JNICALL Java_com_rinoize_risynth2_NativeEngine_startNative(JNIEnv* env, jclass, jlong h, jint device, jint buffer, jboolean low, jboolean hint, jint cpuMode) {
+    try { return env->NewStringUTF(engine(h)->start(device, buffer, low, hint, cpuMode).c_str()); }
     catch (const std::exception& e) { engine(h)->stop(); return env->NewStringUTF(e.what()); }
 }
 JNIEXPORT void JNICALL Java_com_rinoize_risynth2_NativeEngine_stopNative(JNIEnv*, jclass, jlong h) { engine(h)->stop(); }
@@ -261,6 +291,10 @@ JNIEXPORT jobjectArray JNICALL Java_com_rinoize_risynth2_NativeEngine_parameterI
         auto text = env->NewStringUTF(s.c_str()); env->SetObjectArrayElement(a, i, text); env->DeleteLocalRef(text);
     }
     return a;
+}
+JNIEXPORT jstring JNICALL Java_com_rinoize_risynth2_NativeEngine_cpuPlacementNative(JNIEnv* env, jclass, jlong h) {
+    const std::string info = engine(h)->cpuDescription();
+    return env->NewStringUTF(info.c_str());
 }
 JNIEXPORT jdoubleArray JNICALL Java_com_rinoize_risynth2_NativeEngine_statsNative(JNIEnv* env, jclass, jlong h) {
     auto& e = *engine(h);

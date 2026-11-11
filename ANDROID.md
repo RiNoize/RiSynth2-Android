@@ -31,3 +31,8 @@ Instalá **Preview 0.3.2 encima de Preview 0.3.1**, sin desinstalar: conserva ba
 Las llamadas a Android se hacen en un hilo auxiliar; no bloquean ni cambian los cálculos del callback de audio. No se fuerza afinidad, no se baja calidad ni polifonía, ni se cambia el buffer a escondidas. Puede aumentar consumo y calor. Compará el mismo pad con 2048 frames, primero OFF y luego ON, observando picos, OV, XRuns y estado térmico. **Copiar informe + patch** incluye el estado y los contadores ADPF.
 
 Además se precalculan los mismos logaritmos del LPDL, con doble precisión y validación bit a bit contra 0.3.1. Esa mejora afecta a ese filtro, no a todos los patches. Ver `android/PERFORMANCE032.md`.
+
+
+## CPU placement (0.3.3)
+
+Audio adds a saved Automático / Núcleos de rendimiento selector for the actual single AAudio DSP callback, using RiMU2000's capacity-first policy without fixed CPU numbers. It reports initial/requested/effective CPU masks, TID, observed CPUs and errors. The mode is independent of ADPF and does not parallelize synth voices. See android/CPU_PLACEMENT_033.md.
